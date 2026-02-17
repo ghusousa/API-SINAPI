@@ -149,7 +149,7 @@ def previsao_insumo(
 
     fator = 1.005
     previsao = [
-        {"mes": f"2025-0{m+2}-01", "preco_previsto": round(preco_atual * (fator ** (m + 1)), 2)}
+        {"mes": f"2025-{m+2:02d}-01", "preco_previsto": round(preco_atual * (fator ** (m + 1)), 2)}
         for m in range(6)
     ]
 
