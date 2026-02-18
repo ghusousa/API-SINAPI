@@ -6,7 +6,27 @@ Processa os arquivos XLSX/ZIP publicados mensalmente pela **Caixa Econômica Fed
 
 ---
 
-## Instalação
+## Início Rápido (1 clique)
+
+**Windows:** Dê duplo clique em `iniciar.bat`
+
+**Linux/Mac:**
+```bash
+./iniciar.sh
+```
+
+O script irá automaticamente:
+1. ✅ Verificar se o Python está instalado
+2. ✅ Criar um ambiente virtual (`.venv`)
+3. ✅ Instalar todas as dependências
+4. ✅ Iniciar o servidor na porta 8000
+5. ✅ Abrir o Swagger UI no navegador (`http://localhost:8000/docs`)
+
+> **Requisito:** Python 3.8+ instalado. Baixe em https://www.python.org/downloads/ (marque "Add Python to PATH").
+
+---
+
+## Instalação manual
 
 ```bash
 pip install -e .
