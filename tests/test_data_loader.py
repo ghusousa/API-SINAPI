@@ -16,6 +16,7 @@ from api.data_loader import (
     _detect_file_type_from_filename,
     _is_national_reference_file,
     _extract_hyperlink_value,
+    _find_header_row,
 )
 from tests.sample_data import (
     create_sample_sinapi_xlsx,
@@ -422,9 +423,9 @@ class TestIsNationalReferenceFile:
     def test_insumo_por_estado_nao_e_nacional(self):
         assert _is_national_reference_file("SINAPI_Preco_Ref_Insumos_SP_202601_NaoDesonerado.xlsx") is False
 
-    def test_manutencoes_nao_e_nacional(self):
-        # Manutenções tem formato diferente; não é referência nacional
-        assert _is_national_reference_file("SINAPI_Manutenções_2026_01.xlsx") is False
+    def test_manutencoes_e_nacional(self):
+        # Manutenções é processado como nacional (pode ter colunas UF)
+        assert _is_national_reference_file("SINAPI_Manutenções_2026_01.xlsx") is True
 
 
 # ---------------------------------------------------------------------------
@@ -614,3 +615,126 @@ class TestNationalZipFormat:
         assert len(data["insumos"]) == 11
         # Referência: 6 composições + familias: 1 = 7
         assert len(data["composicoes"]) == 7
+
+
+# ---------------------------------------------------------------------------
+# Header detection improvements
+# ---------------------------------------------------------------------------
+
+class TestFindHeaderRow:
+    """Testa a detecção de cabeçalho com diferentes formatos."""
+
+    def test_header_com_codigo(self):
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["CODIGO", "DESCRICAO", "UNIDADE"])
+        ws.append([1, "Item", "KG"])
+        row, cols = _find_header_row(ws)
+        assert row == 1
+        assert "CODIGO" in cols
+        wb.close()
+
+    def test_header_com_composicao_e_ufs(self):
+        """CSD sem CODIGO mas com COMPOSICAO + colunas UF."""
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["COMPOSICAO", "DESCRICAO", "UNIDADE", "AC", "AL", "SP"])
+        ws.append([94214, "ALVENARIA", "M2", 120.0, 125.0, 130.0])
+        row, cols = _find_header_row(ws)
+        assert row == 1
+        assert "COMPOSICAO" in cols
+        wb.close()
+
+    def test_header_apos_linhas_vazias(self):
+        """Cabeçalho após 7 linhas vazias (não termina prematuramente)."""
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["Metadata"])
+        for _ in range(7):
+            ws.append([None])
+        ws.append(["CODIGO", "DESCRICAO", "UNIDADE"])
+        row, cols = _find_header_row(ws)
+        assert row == 9
+        wb.close()
+
+    def test_header_com_grupo_e_ufs(self):
+        """Cabeçalho com GRUPO + UFs."""
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.append(["GRUPO", "SUBGRUPO", "DESCRICAO", "AC", "AL", "SP"])
+        row, cols = _find_header_row(ws)
+        assert row == 1
+        wb.close()
+
+
+class TestComposicoesSemCodigo:
+    """Testa parsing de composições onde header usa COMPOSICAO em vez de CODIGO."""
+
+    def test_csd_com_composicao_header(self):
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "CSD"
+        for i in range(5):
+            ws.append([f"Metadata {i}"])
+        ws.append(["COMPOSICAO", "DESCRICAO DA COMPOSICAO", "UNIDADE", "SP", "RJ", "MG"])
+        ws.append([94214, "ALVENARIA DE BLOCO CERAMICO", "M2", 120.0, 125.0, 130.0])
+        ws.append([95467, "CONTRAPISO EM ARGAMASSA", "M2", 45.0, 48.0, 50.0])
+        data = parse_referencia_xlsx(wb, "2026-01")
+        wb.close()
+        # 2 composições * 3 UFs = 6
+        assert len(data["composicoes"]) == 6
+
+    def test_csd_e_isd_juntos(self):
+        from openpyxl import Workbook
+        wb = Workbook()
+        # ISD with CODIGO
+        ws_isd = wb.active
+        ws_isd.title = "ISD"
+        for i in range(5):
+            ws_isd.append([f"Metadata {i}"])
+        ws_isd.append(["CODIGO DO INSUMO", "DESCRICAO DO INSUMO", "UNIDADE", "SP"])
+        ws_isd.append([370, "CIMENTO", "KG", 0.58])
+
+        # CSD with COMPOSICAO (no CODIGO)
+        ws_csd = wb.create_sheet("CSD")
+        for i in range(5):
+            ws_csd.append([f"Metadata {i}"])
+        ws_csd.append(["COMPOSICAO", "DESCRICAO DA COMPOSICAO", "UNIDADE", "SP"])
+        ws_csd.append([94214, "ALVENARIA", "M2", 120.0])
+
+        data = parse_referencia_xlsx(wb, "2026-01")
+        wb.close()
+        assert len(data["insumos"]) == 1
+        assert len(data["composicoes"]) == 1
+        assert data["composicoes"][0]["codigo"] == 94214
+
+    def test_aba_generica_com_composicao_e_ufs(self):
+        """Aba com nome genérico mas colunas COMPOSICAO + UFs é detectada."""
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Plan1"
+        ws.append(["COMPOSICAO", "DESCRICAO", "UNIDADE", "AC", "AL", "SP", "RJ"])
+        ws.append([94214, "ALVENARIA", "M2", 120.0, 125.0, 130.0, 128.0])
+        data = parse_referencia_xlsx(wb, "2026-01")
+        wb.close()
+        # Auto-detected as composicao, 1 row * 4 UFs = 4
+        assert len(data["composicoes"]) == 4
+
+
+class TestDetectSheetTypeExpanded:
+    """Testa os novos padrões de detecção de tipo de aba."""
+
+    def test_servico(self):
+        assert _detect_sheet_type("Serviços") == "composicao"
+
+    def test_manutencao(self):
+        assert _detect_sheet_type("Manutenções") == "composicao"
+
+    def test_manutencao_normalised(self):
+        assert _detect_sheet_type("MANUTENCOES") == "composicao"

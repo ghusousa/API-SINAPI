@@ -6,6 +6,7 @@ e serve os dados a partir dos arquivos SINAPI carregados localmente.
 
 import io
 import logging
+import logging.handlers
 import os
 import re
 import zipfile
@@ -41,6 +42,14 @@ async def upload_sinapi(
 
     logger = logging.getLogger("api.upload")
 
+    # Capture parsing logs for diagnostic feedback
+    log_handler = logging.handlers.MemoryHandler(capacity=500)
+    log_formatter = logging.Formatter("%(name)s: %(message)s")
+    log_handler.setFormatter(log_formatter)
+    data_logger = logging.getLogger("api.data_loader")
+    data_logger.addHandler(log_handler)
+    data_logger.setLevel(logging.INFO)
+
     try:
         if filename.lower().endswith(".zip"):
             data = load_zip_file(io.BytesIO(contents))
@@ -61,6 +70,14 @@ async def upload_sinapi(
             status_code=422,
             detail=f"Erro ao processar o arquivo: {e}",
         )
+    finally:
+        data_logger.removeHandler(log_handler)
+
+    # Extract parsing logs for diagnostics
+    log_handler.flush()
+    parsing_logs = [
+        log_formatter.format(record) for record in log_handler.buffer
+    ]
 
     total_records = (
         len(data.get("insumos", []))
@@ -68,7 +85,7 @@ async def upload_sinapi(
         + len(data.get("analitico", []))
     )
     if total_records == 0:
-        # Include diagnostic info
+        # Include diagnostic info + parsing logs
         diag = _diagnose_zip(contents, filename) if filename.lower().endswith(".zip") else ""
         raise HTTPException(
             status_code=422,
@@ -77,6 +94,7 @@ async def upload_sinapi(
                 "Verifique se o arquivo é um SINAPI válido da Caixa "
                 "(formato XLSX/ZIP com planilhas de Insumos, Composições e Analítico)."
                 + (f" Diagnóstico: {diag}" if diag else "")
+                + (f" Logs: {parsing_logs}" if parsing_logs else "")
             ),
         )
 
@@ -92,13 +110,19 @@ async def upload_sinapi(
     with open(save_path, "wb") as f:
         f.write(contents)
 
-    return {
+    response = {
         "mensagem": "Dados carregados com sucesso",
         "arquivo_salvo": save_path,
         "insumos": len(data.get("insumos", [])),
         "composicoes": len(data.get("composicoes", [])),
         "analitico": len(data.get("analitico", [])),
     }
+
+    # Add parsing details if some categories are empty
+    if not data.get("composicoes") or not data.get("analitico"):
+        response["detalhes_parsing"] = parsing_logs
+
+    return response
 
 
 # ---- Status ----------------------------------------------------------------

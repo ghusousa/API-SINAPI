@@ -16,12 +16,15 @@ Campos de saída seguem o formato da API Orçamentador (orcamentador.com.br):
 """
 
 import io
+import logging
 import os
 import re
 import zipfile
 from typing import Dict, List, Optional, Tuple
 
 from openpyxl import load_workbook
+
+logger = logging.getLogger(__name__)
 
 
 # Mapeamento UF -> Nome do estado (usado para identificar arquivos no ZIP)
@@ -110,6 +113,8 @@ def _detect_sheet_type(sheet_name: str) -> Optional[str]:
         return "insumo"
     if "COMPOS" in name or name.startswith("CS") or name.startswith("CC"):
         return "composicao"
+    if "SERVICO" in name or "MANUTENC" in name:
+        return "composicao"
     return None
 
 
@@ -135,12 +140,14 @@ def _is_national_reference_file(filename: str) -> bool:
     - SINAPI_Referência_2026_01.xlsx  (principal: ISD/ICD/CSD/CCD sheets)
     - SINAPI_mao_de_obra_2026_01.xlsx (mão de obra por UF)
     - SINAPI_familias_e_coeficientes_2026_01.xlsx (famílias/coeficientes)
+    - SINAPI_Manutenções_2026_01.xlsx (manutenções de composições)
     """
     name = _normalise(os.path.basename(filename))
     return (
         "REFERENCIA" in name
         or "MAO_DE_OBRA" in name or "MAODEOBRA" in name
         or "FAMILIA" in name
+        or "MANUTENC" in name
     )
 
 
@@ -185,24 +192,59 @@ def _find_header_row(ws, max_rows=50) -> Tuple[Optional[int], Dict[str, int]]:
 
     Escaneia até max_rows (50 por padrão) porque arquivos SINAPI reais da
     Caixa têm linhas de metadados antes do cabeçalho (tipicamente 4-7 linhas).
+
+    Reconhece cabeçalhos que contenham:
+    - CODIGO (padrão para planilhas de insumos e composições)
+    - DESCRICAO + pelo menos 3 colunas UF (formato pivotado nacional)
+    - COMPOSICAO (abas de composições onde CODIGO pode estar ausente)
+    - GRUPO (abas de composições com classificação hierárquica)
     """
+    # Indicadores primários de cabeçalho (qualquer um destes basta)
+    _PRIMARY_KEYS = ("CODIGO", "COMPOSICAO")
+    # Indicadores secundários: precisam de confirmação adicional (UF columns)
+    _SECONDARY_KEYS = ("DESCRICAO", "GRUPO", "INSUMO")
+
     empty_streak = 0
+    best_candidate: Optional[Tuple[int, Dict[str, int]]] = None
+    best_score = 0
+
     for row_idx in range(1, max_rows + 1):
-        cells = {
-            _normalise(str(c.value or "")): c.column - 1
-            for c in ws[row_idx]
-            if c.value
-        }
+        try:
+            cells = {
+                _normalise(str(c.value or "")): c.column - 1
+                for c in ws[row_idx]
+                if c.value
+            }
+        except (IndexError, ValueError):
+            break
         if not cells:
             empty_streak += 1
-            if empty_streak >= 5:
+            if empty_streak >= 10:
                 break
             continue
         empty_streak = 0
-        # Procura pela coluna CODIGO que é comum em todas as abas
-        for key in cells:
-            if "CODIGO" in key:
+
+        keys = set(cells.keys())
+
+        # Match principal: coluna contém CODIGO
+        for key in keys:
+            if any(pk in key for pk in _PRIMARY_KEYS):
                 return row_idx, cells
+
+        # Match secundário: DESCRICAO/COMPOSICAO/GRUPO + pelo menos 3 UFs
+        uf_count = sum(1 for k in keys if len(k) == 2 and k in _ALL_UFS)
+        has_secondary = any(
+            any(sk in key for sk in _SECONDARY_KEYS)
+            for key in keys
+        )
+        if has_secondary and uf_count >= 3:
+            score = uf_count
+            if score > best_score:
+                best_score = score
+                best_candidate = (row_idx, cells)
+
+    if best_candidate:
+        return best_candidate
     return None, {}
 
 
@@ -274,6 +316,8 @@ def parse_xlsx_workbook(wb, estado: str, referencia: str) -> dict:
 
         if sheet_type == "insumo":
             col_codigo = _find_col(columns, "CODIGO")
+            if col_codigo is None:
+                col_codigo = _find_col(columns, "INSUMO")
             col_desc = _find_col(columns, "DESCRICAO")
             col_unidade = _find_col(columns, "UNIDADE")
             col_preco = _find_col(columns, "PRECO", "MEDIANO", "CUSTO")
@@ -312,6 +356,8 @@ def parse_xlsx_workbook(wb, estado: str, referencia: str) -> dict:
 
         elif sheet_type == "composicao":
             col_codigo = _find_col(columns, "CODIGO")
+            if col_codigo is None:
+                col_codigo = _find_col(columns, "COMPOSICAO", "SERVICO", "COMP")
             col_desc = _find_col(columns, "DESCRICAO")
             col_unidade = _find_col(columns, "UNIDADE")
             col_custo = _find_col(columns, "CUSTO", "TOTAL", "PRECO")
@@ -554,27 +600,54 @@ def parse_referencia_xlsx(wb, referencia: str) -> dict:
     result = {"insumos": [], "composicoes": [], "analitico": []}
     referencia = _normalise_referencia(referencia)
 
+    logger.info("parse_referencia_xlsx: abas=%s", wb.sheetnames)
+
     for sheet_name in wb.sheetnames:
         sheet_type = _detect_sheet_type(sheet_name)
-        if sheet_type is None:
-            continue
         if sheet_type == "analitico":
-            # Analítico no formato nacional tem estrutura diferente;
-            # por ora pula (requer parsing especial com composicao-pai)
+            logger.debug("Aba '%s' ignorada (analítico nacional requer parsing especial)", sheet_name)
             continue
 
         regime = _detect_regime(sheet_name)
         ws = wb[sheet_name]
         header_row, columns = _find_header_row(ws)
         if header_row is None:
+            if sheet_type is not None:
+                logger.warning("Aba '%s' (tipo=%s): cabeçalho não encontrado", sheet_name, sheet_type)
+            else:
+                logger.debug("Aba '%s' ignorada (sem cabeçalho reconhecido)", sheet_name)
             continue
+
+        # Auto-detectar tipo da aba a partir das colunas se não detectado pelo nome
+        if sheet_type is None:
+            col_keys = " ".join(columns.keys())
+            if "INSUMO" in col_keys:
+                sheet_type = "insumo"
+            elif "COMPOSICAO" in col_keys or "COMP" in col_keys or "SERVICO" in col_keys:
+                sheet_type = "composicao"
+            else:
+                logger.debug("Aba '%s' ignorada (tipo não reconhecido pelo nome nem colunas)", sheet_name)
+                continue
+
+        logger.info(
+            "Aba '%s' (tipo=%s, regime=%s): cabeçalho na linha %d, colunas=%s",
+            sheet_name, sheet_type, regime, header_row, list(columns.keys()),
+        )
 
         # Identificar colunas de dados (CODIGO, DESCRICAO, UNIDADE)
         col_codigo = _find_col(columns, "CODIGO")
+        if col_codigo is None:
+            # Composições podem usar COMPOSICAO ou SERVICO como coluna de código
+            col_codigo = _find_col(columns, "COMPOSICAO", "SERVICO", "COMP")
         col_desc = _find_col(columns, "DESCRICAO")
         col_unidade = _find_col(columns, "UNIDADE")
 
         if col_codigo is None or col_desc is None:
+            logger.warning(
+                "Aba '%s': colunas essenciais não encontradas "
+                "(col_codigo=%s, col_desc=%s). Colunas: %s",
+                sheet_name, col_codigo, col_desc, list(columns.keys()),
+            )
             continue
 
         # Identificar colunas UF (2 letras maiúsculas que são UFs conhecidas)
@@ -720,6 +793,9 @@ def load_zip_file(file_path_or_bytes) -> dict:
     combined = {"insumos": [], "composicoes": [], "analitico": []}
 
     try:
+        xlsx_names = [n for n in zf.namelist() if n.lower().endswith(".xlsx") and not n.startswith("__MACOSX") and not n.startswith(".")]
+        logger.info("ZIP contém %d XLSX: %s", len(xlsx_names), xlsx_names)
+
         for name in zf.namelist():
             if not name.lower().endswith(".xlsx"):
                 continue
@@ -731,11 +807,16 @@ def load_zip_file(file_path_or_bytes) -> dict:
 
             # Check if this is a national reference file (no UF in filename)
             if _is_national_reference_file(name):
+                logger.info("Processando arquivo nacional: %s", name)
                 wb = load_workbook(io.BytesIO(xlsx_bytes), read_only=True, data_only=False)
                 try:
                     data = parse_referencia_xlsx(wb, ref)
                 finally:
                     wb.close()
+                logger.info(
+                    "Resultado %s: insumos=%d, composicoes=%d, analitico=%d",
+                    name, len(data["insumos"]), len(data["composicoes"]), len(data["analitico"]),
+                )
                 combined["insumos"].extend(data["insumos"])
                 combined["composicoes"].extend(data["composicoes"])
                 combined["analitico"].extend(data["analitico"])
