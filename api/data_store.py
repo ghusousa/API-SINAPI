@@ -141,11 +141,11 @@ class SinapiStore:
                     "classe": i.get("classe"),
                     "referencia": i.get("referencia"),
                 }
-            regime = i.get("regime", "").upper()
+            regime = i.get("regime", "NAO_DESONERADO").upper()
             preco = i.get("preco")
             if regime == "DESONERADO":
                 merged[key]["preco_desonerado"] = preco
-            else:
+            elif regime == "NAO_DESONERADO":
                 merged[key]["preco_naodesonerado"] = preco
         return list(merged.values())
 
@@ -163,11 +163,11 @@ class SinapiStore:
                     "preco_naodesonerado": None,
                     "referencia": i.get("referencia"),
                 }
-            regime = i.get("regime", "").upper()
+            regime = i.get("regime", "NAO_DESONERADO").upper()
             preco = i.get("preco")
             if regime == "DESONERADO":
                 merged[key]["preco_desonerado"] = preco
-            else:
+            elif regime == "NAO_DESONERADO":
                 merged[key]["preco_naodesonerado"] = preco
         return list(merged.values())
 
