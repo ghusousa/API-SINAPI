@@ -8,11 +8,13 @@ import pytest
 from api.data_loader import (
     load_xlsx_file,
     load_zip_file,
+    parse_referencia_xlsx,
     _detect_estado_from_filename,
     _detect_referencia_from_filename,
     _detect_regime,
     _detect_sheet_type,
     _detect_file_type_from_filename,
+    _is_national_reference_file,
     _extract_hyperlink_value,
 )
 from tests.sample_data import (
@@ -401,3 +403,214 @@ class TestLoadZipReal:
         assert len(data["composicoes"]) == 12
         # 5 itens analíticos * 2 regimes * 2 estados = 20
         assert len(data["analitico"]) == 20
+
+
+# ---------------------------------------------------------------------------
+# Detecção de arquivo nacional
+# ---------------------------------------------------------------------------
+
+class TestIsNationalReferenceFile:
+    def test_referencia(self):
+        assert _is_national_reference_file("SINAPI_Referência_2026_01.xlsx") is True
+
+    def test_mao_de_obra(self):
+        assert _is_national_reference_file("SINAPI_mao_de_obra_2026_01.xlsx") is True
+
+    def test_familias(self):
+        assert _is_national_reference_file("SINAPI_familias_e_coeficientes_2026_01.xlsx") is True
+
+    def test_insumo_por_estado_nao_e_nacional(self):
+        assert _is_national_reference_file("SINAPI_Preco_Ref_Insumos_SP_202601_NaoDesonerado.xlsx") is False
+
+    def test_manutencoes_nao_e_nacional(self):
+        # Manutenções tem formato diferente; não é referência nacional
+        assert _is_national_reference_file("SINAPI_Manutenções_2026_01.xlsx") is False
+
+
+# ---------------------------------------------------------------------------
+# Formato Nacional de Referência (colunas UF)
+# ---------------------------------------------------------------------------
+
+def _create_national_xlsx():
+    """Cria XLSX no formato nacional com abas ISD/ICD/CSD/CCD e colunas UF."""
+    from openpyxl import Workbook
+    wb = Workbook()
+    # --- ISD: Insumos Sem Desoneração ---
+    ws_isd = wb.active
+    ws_isd.title = "ISD"
+    # Metadata rows (like the real file has before the header)
+    for i in range(8):
+        ws_isd.append([f"Metadata row {i + 1}"])
+    # Row 9: Header
+    ws_isd.append(["CODIGO DO INSUMO", "DESCRICAO DO INSUMO", "UNIDADE", "SP", "RJ", "MG"])
+    ws_isd.append([370, "CIMENTO PORTLAND", "KG", 0.62, 0.71, 0.55])
+    ws_isd.append([1379, "AREIA MEDIA", "M3", 72.50, 68.90, 75.10])
+
+    # --- ICD: Insumos Com Desoneração ---
+    ws_icd = wb.create_sheet("ICD")
+    for i in range(8):
+        ws_icd.append([f"Metadata row {i + 1}"])
+    ws_icd.append(["CODIGO DO INSUMO", "DESCRICAO DO INSUMO", "UNIDADE", "SP", "RJ", "MG"])
+    ws_icd.append([370, "CIMENTO PORTLAND", "KG", 0.58, 0.65, 0.50])
+
+    # --- CSD: Composições Sem Desoneração ---
+    ws_csd = wb.create_sheet("CSD")
+    for i in range(8):
+        ws_csd.append([f"Metadata row {i + 1}"])
+    ws_csd.append(["CODIGO DA COMPOSICAO", "DESCRICAO DA COMPOSICAO", "UNIDADE", "SP", "RJ", "MG"])
+    ws_csd.append([87316, "ARGAMASSA TRACO 1:2:8", "M3", 501.78, 492.50, 510.20])
+
+    # --- CCD: Composições Com Desoneração ---
+    ws_ccd = wb.create_sheet("CCD")
+    for i in range(8):
+        ws_ccd.append([f"Metadata row {i + 1}"])
+    ws_ccd.append(["CODIGO DA COMPOSICAO", "DESCRICAO DA COMPOSICAO", "UNIDADE", "SP", "RJ", "MG"])
+    ws_ccd.append([87316, "ARGAMASSA TRACO 1:2:8", "M3", 480.12, 471.30, 490.55])
+
+    # Sheet that should be ignored
+    ws_other = wb.create_sheet("Informacoes")
+    ws_other.append(["Este é um relatório informativo"])
+
+    return wb
+
+
+class TestParseReferenciaNacional:
+    def test_carrega_insumos_por_uf(self):
+        wb = _create_national_xlsx()
+        data = parse_referencia_xlsx(wb, "2026-01")
+        wb.close()
+        # ISD: 2 insumos * 3 UFs = 6; ICD: 1 insumo * 3 UFs = 3 => total 9
+        assert len(data["insumos"]) == 9
+
+    def test_carrega_composicoes_por_uf(self):
+        wb = _create_national_xlsx()
+        data = parse_referencia_xlsx(wb, "2026-01")
+        wb.close()
+        # CSD: 1 comp * 3 UFs = 3; CCD: 1 comp * 3 UFs = 3 => total 6
+        assert len(data["composicoes"]) == 6
+
+    def test_insumo_tem_estado_correto(self):
+        wb = _create_national_xlsx()
+        data = parse_referencia_xlsx(wb, "2026-01")
+        wb.close()
+        estados = {ins["estado"] for ins in data["insumos"]}
+        assert estados == {"SP", "RJ", "MG"}
+
+    def test_insumo_tem_regime_correto(self):
+        wb = _create_national_xlsx()
+        data = parse_referencia_xlsx(wb, "2026-01")
+        wb.close()
+        regimes = {ins["regime"] for ins in data["insumos"]}
+        assert "NAO_DESONERADO" in regimes
+        assert "DESONERADO" in regimes
+
+    def test_insumo_preco_correto(self):
+        wb = _create_national_xlsx()
+        data = parse_referencia_xlsx(wb, "2026-01")
+        wb.close()
+        sp_cimento = [i for i in data["insumos"]
+                      if i["codigo"] == 370 and i["estado"] == "SP"
+                      and i["regime"] == "NAO_DESONERADO"]
+        assert len(sp_cimento) == 1
+        assert sp_cimento[0]["preco_mediano"] == 0.62
+
+    def test_composicao_custo_correto(self):
+        wb = _create_national_xlsx()
+        data = parse_referencia_xlsx(wb, "2026-01")
+        wb.close()
+        rj_argamassa = [c for c in data["composicoes"]
+                        if c["codigo"] == 87316 and c["estado"] == "RJ"
+                        and c["regime"] == "NAO_DESONERADO"]
+        assert len(rj_argamassa) == 1
+        assert rj_argamassa[0]["custo_total"] == 492.50
+
+    def test_referencia_preenchida(self):
+        wb = _create_national_xlsx()
+        data = parse_referencia_xlsx(wb, "2026-01")
+        wb.close()
+        for ins in data["insumos"]:
+            assert ins["referencia"] == "2026-01"
+
+    def test_ignora_aba_desconhecida(self):
+        wb = _create_national_xlsx()
+        data = parse_referencia_xlsx(wb, "2026-01")
+        wb.close()
+        # "Informacoes" sheet should not contribute data
+        assert data["analitico"] == []
+
+
+class TestNationalZipFormat:
+    """Testa o upload de ZIP no formato nacional de referência."""
+
+    def test_zip_com_referencia(self):
+        wb = _create_national_xlsx()
+        buf = io.BytesIO()
+        wb.save(buf)
+        wb.close()
+        xlsx_bytes = buf.getvalue()
+
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w") as zf:
+            zf.writestr("SINAPI_Referência_2026_01.xlsx", xlsx_bytes)
+        zip_buf.seek(0)
+
+        data = load_zip_file(zip_buf)
+        assert len(data["insumos"]) > 0
+        assert len(data["composicoes"]) > 0
+
+    def test_zip_com_4_arquivos_nacionais(self):
+        """Simula o ZIP real com 4 arquivos nacionais."""
+        from openpyxl import Workbook
+
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w") as zf:
+            # SINAPI_Referência — principal
+            wb = _create_national_xlsx()
+            buf = io.BytesIO()
+            wb.save(buf)
+            wb.close()
+            zf.writestr("SINAPI_Referência_2026_01.xlsx", buf.getvalue())
+
+            # SINAPI_mao_de_obra — mão de obra por UF
+            wb2 = Workbook()
+            ws = wb2.active
+            ws.title = "Insumos MO"
+            for i in range(8):
+                ws.append([f"Metadata {i}"])
+            ws.append(["CODIGO DO INSUMO", "DESCRICAO DO INSUMO", "UNIDADE", "SP", "RJ"])
+            ws.append([99001, "PEDREIRO", "H", 15.50, 14.80])
+            buf2 = io.BytesIO()
+            wb2.save(buf2)
+            wb2.close()
+            zf.writestr("SINAPI_mao_de_obra_2026_01.xlsx", buf2.getvalue())
+
+            # SINAPI_familias — famílias de composições
+            wb3 = Workbook()
+            ws3 = wb3.active
+            ws3.title = "Composicoes Familias"
+            for i in range(8):
+                ws3.append([f"Metadata {i}"])
+            ws3.append(["CODIGO DA COMPOSICAO", "DESCRICAO DA COMPOSICAO", "UNIDADE", "SP"])
+            ws3.append([90001, "FAMILIA ALVENARIA", "M2", 120.50])
+            buf3 = io.BytesIO()
+            wb3.save(buf3)
+            wb3.close()
+            zf.writestr("SINAPI_familias_e_coeficientes_2026_01.xlsx", buf3.getvalue())
+
+            # SINAPI_Manutenções — este não é reconhecido como nacional
+            wb4 = Workbook()
+            ws4 = wb4.active
+            ws4.title = "Manutenções"
+            ws4.append(["REFERENCIA", "TIPO", "CODIGO"])
+            buf4 = io.BytesIO()
+            wb4.save(buf4)
+            wb4.close()
+            zf.writestr("SINAPI_Manutenções_2026_01.xlsx", buf4.getvalue())
+
+        zip_buf.seek(0)
+        data = load_zip_file(zip_buf)
+
+        # Referência: 9 insumos + mao_de_obra: 2 insumos = 11
+        assert len(data["insumos"]) == 11
+        # Referência: 6 composições + familias: 1 = 7
+        assert len(data["composicoes"]) == 7

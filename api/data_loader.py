@@ -113,6 +113,31 @@ def _detect_file_type_from_filename(filename: str) -> Optional[str]:
     return None
 
 
+def _is_national_reference_file(filename: str) -> bool:
+    """Detecta se o arquivo é do formato nacional de referência SINAPI.
+
+    Arquivos nacionais contêm dados de todos os estados em colunas UF
+    (AC, AL, ..., TO) em vez de um arquivo por estado.
+
+    Exemplos:
+    - SINAPI_Referência_2026_01.xlsx  (principal: ISD/ICD/CSD/CCD sheets)
+    - SINAPI_mao_de_obra_2026_01.xlsx (mão de obra por UF)
+    - SINAPI_familias_e_coeficientes_2026_01.xlsx (famílias/coeficientes)
+    """
+    name = _normalise(os.path.basename(filename))
+    return (
+        "REFERENCIA" in name
+        or "MAO_DE_OBRA" in name or "MAODEOBRA" in name
+        or "FAMILIA" in name
+    )
+
+
+# Siglas UF válidas para detectar colunas pivotadas no formato nacional.
+# No formato nacional SINAPI, o cabeçalho contém AC, AL, AM, ..., SP, TO como
+# colunas, cada uma com o preço/custo do estado correspondente.
+_ALL_UFS = frozenset(UF_NAMES.keys())
+
+
 _RE_HYPERLINK = re.compile(
     r'=HYPERLINK\([^)]*[,;]\s*"?(\d+)"?\)', re.IGNORECASE
 )
@@ -476,6 +501,119 @@ def parse_single_type_xlsx(wb, file_type: str, estado: str, referencia: str,
     return result
 
 
+def parse_referencia_xlsx(wb, referencia: str) -> dict:
+    """Processa um workbook XLSX do formato nacional de referência SINAPI.
+
+    O formato nacional (SINAPI_Referência_YYYY_MM.xlsx) contém abas como
+    ISD, ICD, ISE, CSD, CCD, CSE onde cada aba tem uma coluna por estado
+    (AC, AL, ..., SP, TO) com os preços/custos.
+
+    Também processa SINAPI_mao_de_obra_YYYY_MM.xlsx que tem estrutura similar.
+
+    Args:
+        wb: Workbook openpyxl.
+        referencia: Data de referência (ex: '2026-01').
+
+    Returns:
+        dict com chaves 'insumos', 'composicoes', 'analitico'.
+    """
+    result = {"insumos": [], "composicoes": [], "analitico": []}
+
+    for sheet_name in wb.sheetnames:
+        sheet_type = _detect_sheet_type(sheet_name)
+        if sheet_type is None:
+            continue
+        if sheet_type == "analitico":
+            # Analítico no formato nacional tem estrutura diferente;
+            # por ora pula (requer parsing especial com composicao-pai)
+            continue
+
+        regime = _detect_regime(sheet_name)
+        ws = wb[sheet_name]
+        header_row, columns = _find_header_row(ws)
+        if header_row is None:
+            continue
+
+        # Identificar colunas de dados (CODIGO, DESCRICAO, UNIDADE)
+        col_codigo = _find_col(columns, "CODIGO")
+        col_desc = _find_col(columns, "DESCRICAO")
+        col_unidade = _find_col(columns, "UNIDADE")
+
+        if col_codigo is None or col_desc is None:
+            continue
+
+        # Identificar colunas UF (2 letras maiúsculas que são UFs conhecidas)
+        uf_cols = {}
+        for col_name, idx in columns.items():
+            clean = col_name.strip()
+            if len(clean) == 2 and clean in _ALL_UFS:
+                uf_cols[clean] = idx
+
+        if not uf_cols:
+            # Fallback para abas que têm colunas de preço/custo mas sem colunas
+            # UF separadas. Isso ocorre em algumas planilhas auxiliares do ZIP
+            # nacional (ex: mão de obra ou famílias) quando o formato interno
+            # não segue o padrão pivotado. Os dados são armazenados com
+            # estado="NACIONAL" para indicar que não são específicos de uma UF.
+            col_preco = _find_col(columns, "PRECO", "MEDIANO", "CUSTO")
+            if col_preco is not None:
+                for row in ws.iter_rows(min_row=header_row + 1, values_only=True):
+                    codigo = _safe_int(row[col_codigo] if col_codigo < len(row) else None)
+                    if not codigo:
+                        continue
+                    desc = str(row[col_desc] if col_desc < len(row) else "") or ""
+                    unidade = str(row[col_unidade] if col_unidade is not None and col_unidade < len(row) else "") or ""
+                    preco = _safe_float(row[col_preco] if col_preco < len(row) else None)
+
+                    target = "insumos" if sheet_type == "insumo" else "composicoes"
+                    entry = {
+                        "codigo": codigo,
+                        "descricao": desc.strip(),
+                        "unidade": unidade.strip(),
+                        "estado": "NACIONAL",
+                        "regime": regime,
+                        "referencia": referencia,
+                        "fonte": "SINAPI",
+                    }
+                    if sheet_type == "insumo":
+                        entry["preco_mediano"] = preco
+                    else:
+                        entry["custo_total"] = preco
+                    result[target].append(entry)
+            continue
+
+        # Unpivot: para cada linha, criar uma entrada por UF
+        for row in ws.iter_rows(min_row=header_row + 1, values_only=True):
+            codigo = _safe_int(row[col_codigo] if col_codigo < len(row) else None)
+            if not codigo:
+                continue
+            desc = str(row[col_desc] if col_desc < len(row) else "") or ""
+            unidade = str(row[col_unidade] if col_unidade is not None and col_unidade < len(row) else "") or ""
+
+            for uf, uf_idx in uf_cols.items():
+                valor = _safe_float(row[uf_idx] if uf_idx < len(row) else None)
+                if valor is None:
+                    continue
+
+                target = "insumos" if sheet_type == "insumo" else "composicoes"
+                entry = {
+                    "codigo": codigo,
+                    "descricao": desc.strip(),
+                    "unidade": unidade.strip(),
+                    "estado": uf,
+                    "regime": regime,
+                    "referencia": referencia,
+                    "fonte": "SINAPI",
+                }
+                if sheet_type == "insumo":
+                    entry["preco_mediano"] = valor
+                else:
+                    entry["custo_total"] = valor
+                result[target].append(entry)
+
+    return result
+
+
 def load_xlsx_file(file_path_or_bytes, estado: str, referencia: str) -> dict:
     """Carrega dados de um arquivo XLSX SINAPI.
 
@@ -522,7 +660,8 @@ def _detect_referencia_from_filename(filename: str) -> Optional[str]:
 def load_zip_file(file_path_or_bytes) -> dict:
     """Carrega dados de um arquivo ZIP SINAPI (contendo XLSX por estado).
 
-    Suporta dois formatos:
+    Suporta três formatos:
+    - Formato nacional: SINAPI_Referência/mao_de_obra/familias com colunas UF.
     - Formato simples: XLSX com múltiplas abas diretamente no ZIP.
     - Formato real Caixa: Pastas por UF/regime com arquivos XLSX separados
       (Preco_Ref_Insumos, Composicoes_Sintetico, Composicoes_Analitico).
@@ -552,16 +691,38 @@ def load_zip_file(file_path_or_bytes) -> dict:
             if name.startswith("__MACOSX") or name.startswith("."):
                 continue
 
-            estado = _detect_estado_from_filename(name)
-            if not estado:
+            ref = _detect_referencia_from_filename(name) or referencia
+            xlsx_bytes = zf.read(name)
+
+            # Check if this is a national reference file (no UF in filename)
+            if _is_national_reference_file(name):
+                wb = load_workbook(io.BytesIO(xlsx_bytes), read_only=True, data_only=False)
+                try:
+                    data = parse_referencia_xlsx(wb, ref)
+                finally:
+                    wb.close()
+                combined["insumos"].extend(data["insumos"])
+                combined["composicoes"].extend(data["composicoes"])
+                combined["analitico"].extend(data["analitico"])
                 continue
 
-            ref = _detect_referencia_from_filename(name) or referencia
+            estado = _detect_estado_from_filename(name)
+            if not estado:
+                # Try parsing as generic multi-sheet XLSX (might have sheet names
+                # with UF info or insumo/composicao keywords)
+                wb = load_workbook(io.BytesIO(xlsx_bytes), read_only=True, data_only=False)
+                try:
+                    data = parse_referencia_xlsx(wb, ref)
+                finally:
+                    wb.close()
+                if data["insumos"] or data["composicoes"] or data["analitico"]:
+                    combined["insumos"].extend(data["insumos"])
+                    combined["composicoes"].extend(data["composicoes"])
+                    combined["analitico"].extend(data["analitico"])
+                continue
 
             # Detect file type from filename (real SINAPI format)
             file_type = _detect_file_type_from_filename(name)
-
-            xlsx_bytes = zf.read(name)
 
             if file_type is not None:
                 # Real format: regime from folder/filename, type from filename
