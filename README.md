@@ -1,8 +1,11 @@
 # API-SINAPI
 
-Cliente Python para a **API SINAPI do Orçamentador** ([www.orcamentador.com.br/api/docs](https://www.orcamentador.com.br/api/docs)).
+API e cliente Python para a **API SINAPI do Orçamentador** ([www.orcamentador.com.br/api/docs](https://www.orcamentador.com.br/api/docs)).
 
-Permite consultar insumos, composições, encargos, indicadores, estados e gerar orçamentos com base na tabela SINAPI, de forma simples e padronizada.
+Este projeto contém:
+
+1. **Servidor API** (`api/`) — API FastAPI que replica todos os endpoints da API oficial do Orçamentador, fazendo proxy das requisições.
+2. **Cliente Python** (`sinapi_client/`) — Biblioteca para consumo da API.
 
 ---
 
@@ -12,9 +15,61 @@ Permite consultar insumos, composições, encargos, indicadores, estados e gerar
 pip install -e .
 ```
 
-Requisitos: Python >= 3.8 e [requests](https://pypi.org/project/requests/).
+Requisitos: Python >= 3.8, [requests](https://pypi.org/project/requests/), [FastAPI](https://fastapi.tiangolo.com/), [uvicorn](https://www.uvicorn.org/), [httpx](https://www.python-httpx.org/).
 
 ---
+
+## Servidor API
+
+O servidor replica todos os endpoints da API oficial do Orçamentador, protegidos por autenticação via `X-API-Key`.
+
+### Configuração
+
+Defina as variáveis de ambiente:
+
+```bash
+# Chave(s) de API aceitas pelo nosso servidor (separadas por vírgula)
+export API_KEYS="chave1,chave2"
+
+# Chave de API para acessar a API upstream do Orçamentador
+export UPSTREAM_API_KEY="SUA_CHAVE_ORCAMENTADOR"
+```
+
+### Iniciar o servidor
+
+```bash
+uvicorn api.app:app --host 0.0.0.0 --port 8000
+```
+
+### Documentação interativa
+
+Acesse `http://localhost:8000/docs` para a interface Swagger UI.
+
+### Endpoints disponíveis
+
+| Endpoint              | Descrição                                      |
+|-----------------------|------------------------------------------------|
+| `GET /insumos`        | Busca insumos por nome, código ou filtros       |
+| `GET /composicoes`    | Busca composições por nome, código ou filtros   |
+| `GET /composicao`     | Detalha uma composição específica               |
+| `GET /composicao_explode` | Lista todos os insumos de uma composição    |
+| `GET /historico`      | Histórico de preços (insumo ou composição)      |
+| `GET /comparar`       | Compara preço entre estados                     |
+| `GET /previsao`       | Previsão de preço                               |
+| `GET /encargos`       | Encargos sociais                                |
+| `GET /indicadores`    | Indicadores econômicos                          |
+| `GET /estados`        | Lista estados disponíveis                       |
+| `GET /orcamento`      | Gera orçamento com base em itens e quantidades  |
+
+### Exemplo de chamada
+
+```bash
+curl -H "X-API-Key: SUA_CHAVE" "http://localhost:8000/insumos?nome=cimento&estado=sp&limit=10"
+```
+
+---
+
+## Cliente Python
 
 ## Autenticação
 
