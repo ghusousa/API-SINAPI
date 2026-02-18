@@ -47,11 +47,11 @@ async def proxy_request(path: str, query_params) -> dict:
     async with httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT) as client:
         try:
             response = await client.get(url, params=params, headers=headers)
-        except httpx.RequestError as exc:
+        except httpx.RequestError:
             raise HTTPException(
                 status_code=502,
-                detail=f"Erro de conexão com a API upstream: {exc}",
-            ) from exc
+                detail="Erro de conexão com a API upstream",
+            )
 
     if 200 <= response.status_code < 300:
         try:

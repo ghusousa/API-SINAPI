@@ -1,13 +1,12 @@
 """Testes para os endpoints da API SINAPI."""
 
 import os
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient, ASGITransport
 
 from api.app import app
-from api.deps import API_KEYS
 
 
 # ---------------------------------------------------------------------------
@@ -17,10 +16,11 @@ from api.deps import API_KEYS
 @pytest.fixture(autouse=True)
 def _setup_keys():
     """Configura chave de API válida para os testes."""
-    API_KEYS.clear()
-    API_KEYS.add("test-key")
+    import api.deps
+    original = api.deps.API_KEYS
+    api.deps.API_KEYS = frozenset({"test-key"})
     yield
-    API_KEYS.clear()
+    api.deps.API_KEYS = original
 
 
 @pytest.fixture
@@ -31,8 +31,6 @@ def headers():
 # Helper to create a mock httpx.Response
 def _mock_upstream(status_code=200, json_data=None):
     """Retorna um patch que simula a resposta da API upstream."""
-    from unittest.mock import MagicMock
-
     resp = MagicMock()
     resp.status_code = status_code
     resp.json.return_value = json_data if json_data is not None else {}
@@ -68,7 +66,6 @@ class TestAuth:
         with patch("api.proxy.UPSTREAM_API_KEY", "upstream-key"), \
              patch("api.proxy.httpx.AsyncClient") as MockClient:
             mock_inst = AsyncMock()
-            from unittest.mock import MagicMock
             mock_resp = MagicMock()
             mock_resp.status_code = 200
             mock_resp.json.return_value = {"estados": []}
@@ -108,7 +105,6 @@ class TestEndpoints:
         with patch("api.proxy.UPSTREAM_API_KEY", "upstream-key"), \
              patch("api.proxy.httpx.AsyncClient") as MockClient:
             mock_inst = AsyncMock()
-            from unittest.mock import MagicMock
             mock_resp = MagicMock()
             mock_resp.status_code = 200
             mock_resp.json.return_value = {"ok": True}
@@ -134,7 +130,6 @@ class TestEndpoints:
         with patch("api.proxy.UPSTREAM_API_KEY", "upstream-key"), \
              patch("api.proxy.httpx.AsyncClient") as MockClient:
             mock_inst = AsyncMock()
-            from unittest.mock import MagicMock
             mock_resp = MagicMock()
             mock_resp.status_code = 404
             mock_resp.json.return_value = {"erro": "Não encontrado"}
