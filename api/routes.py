@@ -5,6 +5,8 @@ e serve os dados a partir dos arquivos SINAPI carregados localmente.
 """
 
 import io
+import os
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
@@ -15,6 +17,8 @@ from api.data_loader import load_zip_file, load_xlsx_file
 
 router = APIRouter()
 
+DATA_DIR = os.environ.get("SINAPI_DATA_DIR", "data")
+
 
 # ---- Upload de dados -------------------------------------------------------
 
@@ -24,7 +28,11 @@ async def upload_sinapi(
     estado: Optional[str] = Query(None, description="UF do estado (obrigatório para XLSX avulso)"),
     referencia: Optional[str] = Query(None, description="Referência YYYY-MM (obrigatório para XLSX avulso)"),
 ):
-    """Carrega um arquivo SINAPI (ZIP ou XLSX) no servidor."""
+    """Carrega um arquivo SINAPI (ZIP ou XLSX) no servidor.
+
+    O arquivo é salvo na pasta de dados para ser recarregado automaticamente
+    quando o servidor reiniciar.
+    """
     contents = await file.read()
     filename = file.filename or ""
 
@@ -40,13 +48,54 @@ async def upload_sinapi(
     else:
         raise HTTPException(status_code=400, detail="Formato não suportado. Envie .zip ou .xlsx")
 
+    total_records = (
+        len(data.get("insumos", []))
+        + len(data.get("composicoes", []))
+        + len(data.get("analitico", []))
+    )
+    if total_records == 0:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Nenhum dado encontrado no arquivo. "
+                "Verifique se o arquivo é um SINAPI válido da Caixa "
+                "(formato XLSX/ZIP com planilhas de Insumos, Composições e Analítico)."
+            ),
+        )
+
     store.load(data)
+
+    # Salvar arquivo no diretório de dados para persistência.
+    # Sanitizar nome: apenas alfanuméricos, hífens, underscores e ponto.
+    safe_name = re.sub(r'[^\w.\-]', '_', os.path.basename(filename))
+    if not safe_name:
+        safe_name = "upload.dat"
+    os.makedirs(DATA_DIR, exist_ok=True)
+    save_path = os.path.join(DATA_DIR, safe_name)
+    with open(save_path, "wb") as f:
+        f.write(contents)
 
     return {
         "mensagem": "Dados carregados com sucesso",
+        "arquivo_salvo": save_path,
         "insumos": len(data.get("insumos", [])),
         "composicoes": len(data.get("composicoes", [])),
         "analitico": len(data.get("analitico", [])),
+    }
+
+
+# ---- Status ----------------------------------------------------------------
+
+@router.get("/status", tags=["Admin"])
+async def status():
+    """Mostra o status dos dados carregados no servidor."""
+    return {
+        "insumos_carregados": len(store._insumos),
+        "composicoes_carregadas": len(store._composicoes),
+        "analitico_carregados": len(store._analitico),
+        "estados_disponiveis": sorted(store._estados),
+        "referencias_disponiveis": sorted(store._referencias),
+        "diretorio_dados": DATA_DIR,
     }
 
 

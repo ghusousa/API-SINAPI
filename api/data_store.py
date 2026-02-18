@@ -38,9 +38,25 @@ class SinapiStore:
     def load(self, data: dict):
         """Carrega dados no store (resultado de data_loader).
 
+        Remove dados antigos do mesmo estado/referência/regime antes de
+        inserir os novos, evitando duplicação em uploads repetidos.
+
         Args:
             data: dict com chaves 'insumos', 'composicoes', 'analitico'.
         """
+        # Identifica combinações (estado, referencia, regime) dos novos dados
+        # para remover duplicatas existentes antes de inserir.
+        new_keys: set = set()
+        for item in data.get("insumos", []) + data.get("composicoes", []):
+            new_keys.add((
+                item.get("estado", "").upper(),
+                item.get("referencia", ""),
+                item.get("regime", "").upper(),
+            ))
+
+        if new_keys:
+            self._remove_matching(new_keys)
+
         for item in data.get("insumos", []):
             self._insumos.append(item)
             self._insumos_by_codigo[item["codigo"]].append(item)
@@ -58,6 +74,41 @@ class SinapiStore:
         for item in data.get("analitico", []):
             self._analitico.append(item)
             self._analitico_by_comp[item["composicao_codigo"]].append(item)
+
+    def _remove_matching(self, keys: set):
+        """Remove dados existentes que correspondem às chaves (estado, ref, regime)."""
+
+        def _match(item: dict) -> bool:
+            return (
+                item.get("estado", "").upper(),
+                item.get("referencia", ""),
+                item.get("regime", "").upper(),
+            ) in keys
+
+        # Filtrar listas
+        self._insumos = [i for i in self._insumos if not _match(i)]
+        self._composicoes = [c for c in self._composicoes if not _match(c)]
+        self._analitico = [a for a in self._analitico if not _match(a)]
+
+        # Reconstruir índices
+        self._insumos_by_codigo.clear()
+        for item in self._insumos:
+            self._insumos_by_codigo[item["codigo"]].append(item)
+
+        self._composicoes_by_codigo.clear()
+        for item in self._composicoes:
+            self._composicoes_by_codigo[item["codigo"]].append(item)
+
+        self._analitico_by_comp.clear()
+        for item in self._analitico:
+            self._analitico_by_comp[item["composicao_codigo"]].append(item)
+
+        # Recalcular estados/referências
+        self._estados = {i["estado"].upper() for i in self._insumos + self._composicoes}
+        self._referencias = {
+            i["referencia"] for i in self._insumos + self._composicoes
+            if i.get("referencia")
+        }
 
     def clear(self):
         """Remove todos os dados carregados."""
