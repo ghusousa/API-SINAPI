@@ -187,6 +187,17 @@ def _extract_hyperlink_value(val):
     return val
 
 
+# Indicadores para detecção de cabeçalho em planilhas SINAPI.
+# Primários: qualquer coluna contendo uma destas strings basta para identificar
+# a linha como cabeçalho. Secundários: precisam de ≥3 colunas UF como confirmação.
+_HEADER_PRIMARY_KEYS = ("CODIGO", "COMPOSICAO")
+_HEADER_SECONDARY_KEYS = ("DESCRICAO", "GRUPO", "INSUMO")
+
+# Máximo de linhas vazias consecutivas antes de desistir da busca por cabeçalho.
+# Arquivos SINAPI reais têm até 8 linhas de metadados/espaço antes do cabeçalho.
+_MAX_EMPTY_ROW_STREAK = 10
+
+
 def _find_header_row(ws, max_rows=50) -> Tuple[Optional[int], Dict[str, int]]:
     """Encontra a linha de cabeçalho e mapeia colunas por nome.
 
@@ -194,16 +205,9 @@ def _find_header_row(ws, max_rows=50) -> Tuple[Optional[int], Dict[str, int]]:
     Caixa têm linhas de metadados antes do cabeçalho (tipicamente 4-7 linhas).
 
     Reconhece cabeçalhos que contenham:
-    - CODIGO (padrão para planilhas de insumos e composições)
-    - DESCRICAO + pelo menos 3 colunas UF (formato pivotado nacional)
-    - COMPOSICAO (abas de composições onde CODIGO pode estar ausente)
-    - GRUPO (abas de composições com classificação hierárquica)
+    - CODIGO / COMPOSICAO (indicadores primários)
+    - DESCRICAO/GRUPO/INSUMO + pelo menos 3 colunas UF (formato pivotado)
     """
-    # Indicadores primários de cabeçalho (qualquer um destes basta)
-    _PRIMARY_KEYS = ("CODIGO", "COMPOSICAO")
-    # Indicadores secundários: precisam de confirmação adicional (UF columns)
-    _SECONDARY_KEYS = ("DESCRICAO", "GRUPO", "INSUMO")
-
     empty_streak = 0
     best_candidate: Optional[Tuple[int, Dict[str, int]]] = None
     best_score = 0
@@ -219,28 +223,28 @@ def _find_header_row(ws, max_rows=50) -> Tuple[Optional[int], Dict[str, int]]:
             break
         if not cells:
             empty_streak += 1
-            if empty_streak >= 10:
+            if empty_streak >= _MAX_EMPTY_ROW_STREAK:
                 break
             continue
         empty_streak = 0
 
         keys = set(cells.keys())
 
-        # Match principal: coluna contém CODIGO
+        # Match principal: coluna contém CODIGO ou COMPOSICAO
         for key in keys:
-            if any(pk in key for pk in _PRIMARY_KEYS):
+            if any(pk in key for pk in _HEADER_PRIMARY_KEYS):
                 return row_idx, cells
 
-        # Match secundário: DESCRICAO/COMPOSICAO/GRUPO + pelo menos 3 UFs
+        # Match secundário: DESCRICAO/GRUPO/INSUMO + pelo menos 3 UFs
         uf_count = sum(1 for k in keys if len(k) == 2 and k in _ALL_UFS)
         has_secondary = any(
-            any(sk in key for sk in _SECONDARY_KEYS)
+            sk in key
             for key in keys
+            for sk in _HEADER_SECONDARY_KEYS
         )
         if has_secondary and uf_count >= 3:
-            score = uf_count
-            if score > best_score:
-                best_score = score
+            if uf_count > best_score:
+                best_score = uf_count
                 best_candidate = (row_idx, cells)
 
     if best_candidate:
@@ -793,15 +797,15 @@ def load_zip_file(file_path_or_bytes) -> dict:
     combined = {"insumos": [], "composicoes": [], "analitico": []}
 
     try:
-        xlsx_names = [n for n in zf.namelist() if n.lower().endswith(".xlsx") and not n.startswith("__MACOSX") and not n.startswith(".")]
+        xlsx_names = [
+            n for n in zf.namelist()
+            if n.lower().endswith(".xlsx")
+            and not n.startswith("__MACOSX")
+            and not n.startswith(".")
+        ]
         logger.info("ZIP contém %d XLSX: %s", len(xlsx_names), xlsx_names)
 
-        for name in zf.namelist():
-            if not name.lower().endswith(".xlsx"):
-                continue
-            if name.startswith("__MACOSX") or name.startswith("."):
-                continue
-
+        for name in xlsx_names:
             ref = _detect_referencia_from_filename(name) or referencia
             xlsx_bytes = zf.read(name)
 

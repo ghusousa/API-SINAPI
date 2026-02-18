@@ -43,8 +43,8 @@ async def upload_sinapi(
     logger = logging.getLogger("api.upload")
 
     # Capture parsing logs for diagnostic feedback
-    log_handler = logging.handlers.MemoryHandler(capacity=500)
-    log_formatter = logging.Formatter("%(name)s: %(message)s")
+    log_handler = logging.handlers.MemoryHandler(capacity=200)
+    log_formatter = logging.Formatter("%(message)s")
     log_handler.setFormatter(log_formatter)
     data_logger = logging.getLogger("api.data_loader")
     data_logger.addHandler(log_handler)
