@@ -312,7 +312,6 @@ class SinapiStore:
             coef = a.get("coeficiente", 0) or 0
             pu = a.get("preco_unitario") or 0
             item_codigo = a.get("item_codigo")
-            tipo = "COMPOSICAO" if item_codigo and item_codigo in self._composicoes_by_codigo else "INSUMO"
             formatted_items.append({
                 "codigo": item_codigo,
                 "descricao": a.get("nome", ""),
@@ -320,7 +319,7 @@ class SinapiStore:
                 "coeficiente": coef,
                 "preco_unitario": a.get("preco_unitario"),
                 "preco_total": round(coef * pu, 2),
-                "tipo": tipo,
+                "tipo": self._classify_item_tipo(item_codigo),
             })
 
         comp["itens"] = formatted_items
@@ -353,15 +352,11 @@ class SinapiStore:
             analitico = [a for a in analitico if a.get("regime", "").upper() == regime.upper()]
 
         insumos = []
-        count_insumo = 0
-        count_mao_de_obra = 0
-        count_equipamento = 0
-        count_material = 0
+        totais_counts = {"insumos": 0, "mao_de_obra": 0, "equipamentos": 0, "materiais": 0}
         for a in analitico:
             coef = a.get("coeficiente", 0) or 0
             pu = a.get("preco_unitario") or 0
             item_codigo = a.get("item_codigo")
-            tipo = "COMPOSICAO" if item_codigo and item_codigo in self._composicoes_by_codigo else "INSUMO"
             insumos.append({
                 "codigo": item_codigo,
                 "nome": a.get("nome", ""),
@@ -369,18 +364,10 @@ class SinapiStore:
                 "coeficiente": coef,
                 "preco_unitario": a.get("preco_unitario"),
                 "preco_total": round(coef * pu, 2),
-                "tipo": tipo,
+                "tipo": self._classify_item_tipo(item_codigo),
             })
-            # Count by original tipo field from data
-            orig_tipo = (a.get("tipo") or "").upper()
-            if "MAO" in orig_tipo or "MÃO" in orig_tipo:
-                count_mao_de_obra += 1
-            elif "EQUIP" in orig_tipo:
-                count_equipamento += 1
-            elif "MATERIAL" in orig_tipo:
-                count_material += 1
-            else:
-                count_insumo += 1
+            cat = self._classify_tipo_categoria(a.get("tipo", ""))
+            totais_counts[cat] += 1
 
         return {
             "composicao": {
@@ -391,13 +378,26 @@ class SinapiStore:
                 "preco_naodesonerado": comp_info.get("preco_naodesonerado"),
             },
             "insumos": insumos,
-            "totais": {
-                "insumos": count_insumo,
-                "mao_de_obra": count_mao_de_obra,
-                "equipamentos": count_equipamento,
-                "materiais": count_material,
-            },
+            "totais": totais_counts,
         }
+
+    def _classify_item_tipo(self, item_codigo) -> str:
+        """Classifica se um item é COMPOSICAO ou INSUMO pelo código."""
+        if item_codigo and item_codigo in self._composicoes_by_codigo:
+            return "COMPOSICAO"
+        return "INSUMO"
+
+    @staticmethod
+    def _classify_tipo_categoria(tipo_str: str) -> str:
+        """Classifica tipo de insumo em categoria para contagem (MAO DE OBRA, EQUIPAMENTO, MATERIAL)."""
+        t = (tipo_str or "").upper()
+        if "MAO" in t or "MÃO" in t:
+            return "mao_de_obra"
+        if "EQUIP" in t:
+            return "equipamentos"
+        if "MATERIAL" in t:
+            return "materiais"
+        return "insumos"
 
     # ------------------------------------------------------------------
     # Consultas - Histórico, Comparar, Previsão
@@ -441,7 +441,8 @@ class SinapiStore:
 
         historico = sorted(by_ref.values(), key=lambda x: x.get("referencia", ""))
 
-        # Calculate variacao (percentage change from previous month)
+        # Calculate variacao (percentage change from previous month).
+        # Uses preco_naodesonerado preferentially; falls back to preco_desonerado.
         for idx in range(len(historico)):
             if idx > 0:
                 prev = historico[idx - 1].get("preco_naodesonerado") or historico[idx - 1].get("preco_desonerado")
@@ -525,6 +526,7 @@ class SinapiStore:
             return {"codigo": int(codigo), "previsao": None}
 
         latest = sorted(merged, key=lambda x: x.get("referencia", ""), reverse=True)[0]
+        estado_value = latest.get("estado") or (estado.upper() if estado else None)
 
         return {
             "codigo": int(codigo),
@@ -532,7 +534,7 @@ class SinapiStore:
                 "preco_desonerado": latest.get("preco_desonerado"),
                 "preco_naodesonerado": latest.get("preco_naodesonerado"),
                 "referencia_base": latest.get("referencia"),
-                "estado": latest.get("estado") if "estado" in latest else (estado.upper() if estado else None),
+                "estado": estado_value,
             },
         }
 
