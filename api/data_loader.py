@@ -8,6 +8,11 @@ O formato esperado segue o padrão oficial da Caixa Econômica Federal:
 - Planilhas de Insumos: colunas CODIGO, DESCRICAO DO INSUMO, UNIDADE, PRECO MEDIANO
 - Planilhas de Composições: colunas CODIGO, DESCRICAO DA COMPOSICAO, UNIDADE, CUSTO TOTAL
 - Planilhas Analíticas: detalhamento dos itens que compõem cada composição
+
+Campos de saída seguem o formato da API Orçamentador (orcamentador.com.br):
+- ``nome`` (em vez de descricao), ``preco`` (genérico, armazenado pelo store
+  como ``preco_desonerado`` / ``preco_naodesonerado``), referência no formato
+  ``YYYY-MM-DD``.
 """
 
 import io
@@ -33,34 +38,41 @@ UF_NAMES = {
 }
 
 ESTADOS_INFO = {
-    "AC": {"nome": "Acre", "ibge": 12, "regiao": "norte"},
-    "AL": {"nome": "Alagoas", "ibge": 27, "regiao": "nordeste"},
-    "AM": {"nome": "Amazonas", "ibge": 13, "regiao": "norte"},
-    "AP": {"nome": "Amapá", "ibge": 16, "regiao": "norte"},
-    "BA": {"nome": "Bahia", "ibge": 29, "regiao": "nordeste"},
-    "CE": {"nome": "Ceará", "ibge": 23, "regiao": "nordeste"},
-    "DF": {"nome": "Distrito Federal", "ibge": 53, "regiao": "centro-oeste"},
-    "ES": {"nome": "Espírito Santo", "ibge": 32, "regiao": "sudeste"},
-    "GO": {"nome": "Goiás", "ibge": 52, "regiao": "centro-oeste"},
-    "MA": {"nome": "Maranhão", "ibge": 21, "regiao": "nordeste"},
-    "MG": {"nome": "Minas Gerais", "ibge": 31, "regiao": "sudeste"},
-    "MS": {"nome": "Mato Grosso do Sul", "ibge": 50, "regiao": "centro-oeste"},
-    "MT": {"nome": "Mato Grosso", "ibge": 51, "regiao": "centro-oeste"},
-    "PA": {"nome": "Pará", "ibge": 15, "regiao": "norte"},
-    "PB": {"nome": "Paraíba", "ibge": 25, "regiao": "nordeste"},
-    "PE": {"nome": "Pernambuco", "ibge": 26, "regiao": "nordeste"},
-    "PI": {"nome": "Piauí", "ibge": 22, "regiao": "nordeste"},
-    "PR": {"nome": "Paraná", "ibge": 41, "regiao": "sul"},
-    "RJ": {"nome": "Rio de Janeiro", "ibge": 33, "regiao": "sudeste"},
-    "RN": {"nome": "Rio Grande do Norte", "ibge": 24, "regiao": "nordeste"},
-    "RO": {"nome": "Rondônia", "ibge": 11, "regiao": "norte"},
-    "RR": {"nome": "Roraima", "ibge": 14, "regiao": "norte"},
-    "RS": {"nome": "Rio Grande do Sul", "ibge": 43, "regiao": "sul"},
-    "SC": {"nome": "Santa Catarina", "ibge": 42, "regiao": "sul"},
-    "SE": {"nome": "Sergipe", "ibge": 28, "regiao": "nordeste"},
-    "SP": {"nome": "São Paulo", "ibge": 35, "regiao": "sudeste"},
-    "TO": {"nome": "Tocantins", "ibge": 17, "regiao": "norte"},
+    "AC": {"nome": "Acre", "ibge": 12, "regiao": "NORTE"},
+    "AL": {"nome": "Alagoas", "ibge": 27, "regiao": "NORDESTE"},
+    "AM": {"nome": "Amazonas", "ibge": 13, "regiao": "NORTE"},
+    "AP": {"nome": "Amapá", "ibge": 16, "regiao": "NORTE"},
+    "BA": {"nome": "Bahia", "ibge": 29, "regiao": "NORDESTE"},
+    "CE": {"nome": "Ceará", "ibge": 23, "regiao": "NORDESTE"},
+    "DF": {"nome": "Distrito Federal", "ibge": 53, "regiao": "CENTRO-OESTE"},
+    "ES": {"nome": "Espírito Santo", "ibge": 32, "regiao": "SUDESTE"},
+    "GO": {"nome": "Goiás", "ibge": 52, "regiao": "CENTRO-OESTE"},
+    "MA": {"nome": "Maranhão", "ibge": 21, "regiao": "NORDESTE"},
+    "MG": {"nome": "Minas Gerais", "ibge": 31, "regiao": "SUDESTE"},
+    "MS": {"nome": "Mato Grosso do Sul", "ibge": 50, "regiao": "CENTRO-OESTE"},
+    "MT": {"nome": "Mato Grosso", "ibge": 51, "regiao": "CENTRO-OESTE"},
+    "PA": {"nome": "Pará", "ibge": 15, "regiao": "NORTE"},
+    "PB": {"nome": "Paraíba", "ibge": 25, "regiao": "NORDESTE"},
+    "PE": {"nome": "Pernambuco", "ibge": 26, "regiao": "NORDESTE"},
+    "PI": {"nome": "Piauí", "ibge": 22, "regiao": "NORDESTE"},
+    "PR": {"nome": "Paraná", "ibge": 41, "regiao": "SUL"},
+    "RJ": {"nome": "Rio de Janeiro", "ibge": 33, "regiao": "SUDESTE"},
+    "RN": {"nome": "Rio Grande do Norte", "ibge": 24, "regiao": "NORDESTE"},
+    "RO": {"nome": "Rondônia", "ibge": 11, "regiao": "NORTE"},
+    "RR": {"nome": "Roraima", "ibge": 14, "regiao": "NORTE"},
+    "RS": {"nome": "Rio Grande do Sul", "ibge": 43, "regiao": "SUL"},
+    "SC": {"nome": "Santa Catarina", "ibge": 42, "regiao": "SUL"},
+    "SE": {"nome": "Sergipe", "ibge": 28, "regiao": "NORDESTE"},
+    "SP": {"nome": "São Paulo", "ibge": 35, "regiao": "SUDESTE"},
+    "TO": {"nome": "Tocantins", "ibge": 17, "regiao": "NORTE"},
 }
+
+
+def _normalise_referencia(ref: str) -> str:
+    """Normaliza referência para formato YYYY-MM-DD (primeiro dia do mês)."""
+    if ref and re.match(r"^\d{4}-\d{2}$", ref):
+        return ref + "-01"
+    return ref
 
 
 def _normalise(text: str) -> str:
@@ -247,6 +259,7 @@ def parse_xlsx_workbook(wb, estado: str, referencia: str) -> dict:
     """
     result = {"insumos": [], "composicoes": [], "analitico": []}
     estado = estado.upper()
+    referencia = _normalise_referencia(referencia)
 
     for sheet_name in wb.sheetnames:
         sheet_type = _detect_sheet_type(sheet_name)
@@ -264,6 +277,8 @@ def parse_xlsx_workbook(wb, estado: str, referencia: str) -> dict:
             col_desc = _find_col(columns, "DESCRICAO")
             col_unidade = _find_col(columns, "UNIDADE")
             col_preco = _find_col(columns, "PRECO", "MEDIANO", "CUSTO")
+            col_tipo_insumo = _find_col(columns, "TIPO")
+            col_classe = _find_col(columns, "CLASSE")
 
             if col_codigo is None or col_desc is None:
                 continue
@@ -275,12 +290,20 @@ def parse_xlsx_workbook(wb, estado: str, referencia: str) -> dict:
                 desc = str(row[col_desc] if col_desc < len(row) else "") or ""
                 unidade = str(row[col_unidade] if col_unidade is not None and col_unidade < len(row) else "") or ""
                 preco = _safe_float(row[col_preco] if col_preco is not None and col_preco < len(row) else None)
+                tipo_val = None
+                if col_tipo_insumo is not None and col_tipo_insumo < len(row) and row[col_tipo_insumo]:
+                    tipo_val = str(row[col_tipo_insumo]).strip()
+                classe_val = None
+                if col_classe is not None and col_classe < len(row) and row[col_classe]:
+                    classe_val = str(row[col_classe]).strip()
 
                 result["insumos"].append({
                     "codigo": codigo,
-                    "descricao": desc.strip(),
+                    "nome": desc.strip(),
                     "unidade": unidade.strip(),
-                    "preco_mediano": preco,
+                    "preco": preco,
+                    "tipo": tipo_val,
+                    "classe": classe_val,
                     "estado": estado,
                     "regime": regime,
                     "referencia": referencia,
@@ -306,9 +329,9 @@ def parse_xlsx_workbook(wb, estado: str, referencia: str) -> dict:
 
                 result["composicoes"].append({
                     "codigo": codigo,
-                    "descricao": desc.strip(),
+                    "nome": desc.strip(),
                     "unidade": unidade.strip(),
-                    "custo_total": custo,
+                    "preco": custo,
                     "estado": estado,
                     "regime": regime,
                     "referencia": referencia,
@@ -356,7 +379,7 @@ def parse_xlsx_workbook(wb, estado: str, referencia: str) -> dict:
                         "composicao_codigo": current_comp,
                         "item_codigo": item_val,
                         "tipo_item": tipo,
-                        "descricao": desc.strip(),
+                        "nome": desc.strip(),
                         "unidade": unidade.strip(),
                         "coeficiente": coef or 0.0,
                         "preco_unitario": preco,
@@ -387,6 +410,7 @@ def parse_single_type_xlsx(wb, file_type: str, estado: str, referencia: str,
     """
     result = {"insumos": [], "composicoes": [], "analitico": []}
     estado = estado.upper()
+    referencia = _normalise_referencia(referencia)
 
     # Use the first (or active) sheet
     ws = wb.active or wb[wb.sheetnames[0]]
@@ -399,6 +423,8 @@ def parse_single_type_xlsx(wb, file_type: str, estado: str, referencia: str,
         col_desc = _find_col(columns, "DESCRICAO")
         col_unidade = _find_col(columns, "UNIDADE")
         col_preco = _find_col(columns, "PRECO", "MEDIANO", "CUSTO")
+        col_tipo_insumo = _find_col(columns, "TIPO")
+        col_classe = _find_col(columns, "CLASSE")
 
         if col_codigo is None or col_desc is None:
             return result
@@ -410,12 +436,20 @@ def parse_single_type_xlsx(wb, file_type: str, estado: str, referencia: str,
             desc = str(row[col_desc] if col_desc < len(row) else "") or ""
             unidade = str(row[col_unidade] if col_unidade is not None and col_unidade < len(row) else "") or ""
             preco = _safe_float(row[col_preco] if col_preco is not None and col_preco < len(row) else None)
+            tipo_val = None
+            if col_tipo_insumo is not None and col_tipo_insumo < len(row) and row[col_tipo_insumo]:
+                tipo_val = str(row[col_tipo_insumo]).strip()
+            classe_val = None
+            if col_classe is not None and col_classe < len(row) and row[col_classe]:
+                classe_val = str(row[col_classe]).strip()
 
             result["insumos"].append({
                 "codigo": codigo,
-                "descricao": desc.strip(),
+                "nome": desc.strip(),
                 "unidade": unidade.strip(),
-                "preco_mediano": preco,
+                "preco": preco,
+                "tipo": tipo_val,
+                "classe": classe_val,
                 "estado": estado,
                 "regime": regime,
                 "referencia": referencia,
@@ -441,9 +475,9 @@ def parse_single_type_xlsx(wb, file_type: str, estado: str, referencia: str,
 
             result["composicoes"].append({
                 "codigo": codigo,
-                "descricao": desc.strip(),
+                "nome": desc.strip(),
                 "unidade": unidade.strip(),
-                "custo_total": custo,
+                "preco": custo,
                 "estado": estado,
                 "regime": regime,
                 "referencia": referencia,
@@ -489,7 +523,7 @@ def parse_single_type_xlsx(wb, file_type: str, estado: str, referencia: str,
                     "composicao_codigo": current_comp,
                     "item_codigo": item_val,
                     "tipo_item": tipo,
-                    "descricao": desc.strip(),
+                    "nome": desc.strip(),
                     "unidade": unidade.strip(),
                     "coeficiente": coef or 0.0,
                     "preco_unitario": preco,
@@ -518,6 +552,7 @@ def parse_referencia_xlsx(wb, referencia: str) -> dict:
         dict com chaves 'insumos', 'composicoes', 'analitico'.
     """
     result = {"insumos": [], "composicoes": [], "analitico": []}
+    referencia = _normalise_referencia(referencia)
 
     for sheet_name in wb.sheetnames:
         sheet_type = _detect_sheet_type(sheet_name)
@@ -568,17 +603,17 @@ def parse_referencia_xlsx(wb, referencia: str) -> dict:
                     target = "insumos" if sheet_type == "insumo" else "composicoes"
                     entry = {
                         "codigo": codigo,
-                        "descricao": desc.strip(),
+                        "nome": desc.strip(),
                         "unidade": unidade.strip(),
+                        "preco": preco,
                         "estado": "NACIONAL",
                         "regime": regime,
                         "referencia": referencia,
                         "fonte": "SINAPI",
                     }
                     if sheet_type == "insumo":
-                        entry["preco_mediano"] = preco
-                    else:
-                        entry["custo_total"] = preco
+                        entry["tipo"] = None
+                        entry["classe"] = None
                     result[target].append(entry)
             continue
 
@@ -598,17 +633,17 @@ def parse_referencia_xlsx(wb, referencia: str) -> dict:
                 target = "insumos" if sheet_type == "insumo" else "composicoes"
                 entry = {
                     "codigo": codigo,
-                    "descricao": desc.strip(),
+                    "nome": desc.strip(),
                     "unidade": unidade.strip(),
+                    "preco": valor,
                     "estado": uf,
                     "regime": regime,
                     "referencia": referencia,
                     "fonte": "SINAPI",
                 }
                 if sheet_type == "insumo":
-                    entry["preco_mediano"] = valor
-                else:
-                    entry["custo_total"] = valor
+                    entry["tipo"] = None
+                    entry["classe"] = None
                 result[target].append(entry)
 
     return result

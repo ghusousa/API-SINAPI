@@ -122,6 +122,56 @@ class SinapiStore:
         self._estados.clear()
 
     # ------------------------------------------------------------------
+    # Helpers - merge items from different regimes
+    # ------------------------------------------------------------------
+
+    def _merge_insumo_prices(self, items: List[dict]) -> List[dict]:
+        """Merge insumo items with same codigo+estado+referencia into one with both prices."""
+        merged: Dict[tuple, dict] = {}
+        for i in items:
+            key = (i["codigo"], i.get("estado", ""), i.get("referencia", ""))
+            if key not in merged:
+                merged[key] = {
+                    "codigo": i["codigo"],
+                    "nome": i.get("nome", ""),
+                    "unidade": i.get("unidade", ""),
+                    "preco_desonerado": None,
+                    "preco_naodesonerado": None,
+                    "tipo": i.get("tipo"),
+                    "classe": i.get("classe"),
+                    "referencia": i.get("referencia"),
+                }
+            regime = i.get("regime", "").upper()
+            preco = i.get("preco")
+            if regime == "DESONERADO":
+                merged[key]["preco_desonerado"] = preco
+            else:
+                merged[key]["preco_naodesonerado"] = preco
+        return list(merged.values())
+
+    def _merge_composicao_prices(self, items: List[dict]) -> List[dict]:
+        """Merge composicao items with same codigo+estado+referencia into one with both prices."""
+        merged: Dict[tuple, dict] = {}
+        for i in items:
+            key = (i["codigo"], i.get("estado", ""), i.get("referencia", ""))
+            if key not in merged:
+                merged[key] = {
+                    "codigo": i["codigo"],
+                    "nome": i.get("nome", ""),
+                    "unidade": i.get("unidade", ""),
+                    "preco_desonerado": None,
+                    "preco_naodesonerado": None,
+                    "referencia": i.get("referencia"),
+                }
+            regime = i.get("regime", "").upper()
+            preco = i.get("preco")
+            if regime == "DESONERADO":
+                merged[key]["preco_desonerado"] = preco
+            else:
+                merged[key]["preco_naodesonerado"] = preco
+        return list(merged.values())
+
+    # ------------------------------------------------------------------
     # Consultas - Insumos
     # ------------------------------------------------------------------
 
@@ -145,7 +195,7 @@ class SinapiStore:
             items = [i for i in items if i["codigo"] == int(codigo)]
         if nome:
             nome_norm = _norm(nome)
-            items = [i for i in items if nome_norm in _norm(i.get("descricao", ""))]
+            items = [i for i in items if nome_norm in _norm(i.get("nome", ""))]
         if estado:
             estado_up = estado.upper()
             items = [i for i in items if i.get("estado", "").upper() == estado_up]
@@ -155,20 +205,23 @@ class SinapiStore:
         if referencia:
             items = [i for i in items if i.get("referencia") == referencia]
 
+        # Merge prices from different regimes
+        merged = self._merge_insumo_prices(items)
+
         # Ordenação
         if sort:
             reverse = (order or "").upper() == "DESC"
-            items = sorted(items, key=lambda x: x.get(sort, ""), reverse=reverse)
+            merged = sorted(merged, key=lambda x: x.get(sort, ""), reverse=reverse)
 
-        total = len(items)
+        total = len(merged)
         start = (page - 1) * limit
-        page_items = items[start: start + limit]
+        page_items = merged[start: start + limit]
 
         return {
+            "data": page_items,
             "total": total,
             "page": page,
             "limit": limit,
-            "data": page_items,
         }
 
     # ------------------------------------------------------------------
@@ -195,7 +248,7 @@ class SinapiStore:
             items = [i for i in items if i["codigo"] == int(codigo)]
         if nome:
             nome_norm = _norm(nome)
-            items = [i for i in items if nome_norm in _norm(i.get("descricao", ""))]
+            items = [i for i in items if nome_norm in _norm(i.get("nome", ""))]
         if estado:
             estado_up = estado.upper()
             items = [i for i in items if i.get("estado", "").upper() == estado_up]
@@ -205,19 +258,22 @@ class SinapiStore:
         if referencia:
             items = [i for i in items if i.get("referencia") == referencia]
 
+        # Merge prices from different regimes
+        merged = self._merge_composicao_prices(items)
+
         if sort:
             reverse = (order or "").upper() == "DESC"
-            items = sorted(items, key=lambda x: x.get(sort, ""), reverse=reverse)
+            merged = sorted(merged, key=lambda x: x.get(sort, ""), reverse=reverse)
 
-        total = len(items)
+        total = len(merged)
         start = (page - 1) * limit
-        page_items = items[start: start + limit]
+        page_items = merged[start: start + limit]
 
         return {
+            "data": page_items,
             "total": total,
             "page": page,
             "limit": limit,
-            "data": page_items,
         }
 
     def detalhar_composicao(
@@ -236,14 +292,35 @@ class SinapiStore:
         if not items:
             return None
 
-        comp = items[0].copy()
+        # Merge prices from both regimes
+        all_items = self._composicoes_by_codigo.get(int(codigo), [])
+        if estado:
+            all_items = [i for i in all_items if i.get("estado", "").upper() == estado.upper()]
+        merged = self._merge_composicao_prices(all_items)
+        comp = merged[0].copy() if merged else items[0].copy()
+
         # Adicionar itens da composição (analítico)
         analitico = self._analitico_by_comp.get(int(codigo), [])
         if estado:
             analitico = [a for a in analitico if a.get("estado", "").upper() == estado.upper()]
         if regime:
             analitico = [a for a in analitico if a.get("regime", "").upper() == regime.upper()]
-        comp["itens"] = analitico
+
+        # Format analítico items with nome, preco_unitario, preco_total
+        formatted_items = []
+        for a in analitico:
+            coef = a.get("coeficiente", 0) or 0
+            pu = a.get("preco_unitario") or 0
+            formatted_items.append({
+                "codigo": a.get("item_codigo"),
+                "nome": a.get("nome", ""),
+                "unidade": a.get("unidade", ""),
+                "coeficiente": coef,
+                "preco_unitario": a.get("preco_unitario"),
+                "preco_total": round(coef * pu, 2),
+            })
+
+        comp["itens"] = formatted_items
         return comp
 
     def explode_composicao(
@@ -260,10 +337,23 @@ class SinapiStore:
         if regime:
             analitico = [a for a in analitico if a.get("regime", "").upper() == regime.upper()]
 
+        formatted_items = []
+        for a in analitico:
+            coef = a.get("coeficiente", 0) or 0
+            pu = a.get("preco_unitario") or 0
+            formatted_items.append({
+                "codigo": a.get("item_codigo"),
+                "nome": a.get("nome", ""),
+                "unidade": a.get("unidade", ""),
+                "coeficiente": coef,
+                "preco_unitario": a.get("preco_unitario"),
+                "preco_total": round(coef * pu, 2),
+            })
+
         return {
             "codigo": int(codigo),
-            "itens": analitico,
-            "total_itens": len(analitico),
+            "itens": formatted_items,
+            "total_itens": len(formatted_items),
         }
 
     # ------------------------------------------------------------------
@@ -290,7 +380,7 @@ class SinapiStore:
         refs = {}
         for i in items:
             ref = i.get("referencia", "")
-            val = i.get("preco_mediano") if item == "insumo" else i.get("custo_total")
+            val = i.get("preco")
             if ref and ref not in refs:
                 refs[ref] = True
                 historico.append({
@@ -331,7 +421,7 @@ class SinapiStore:
             if key in seen:
                 continue
             seen.add(key)
-            val = i.get("preco_mediano") if item == "insumo" else i.get("custo_total")
+            val = i.get("preco")
             comparacao.append({
                 "estado": i.get("estado"),
                 "valor": val,
@@ -371,7 +461,7 @@ class SinapiStore:
             return {"codigo": int(codigo), "item": item, "previsao": None}
 
         latest = sorted(items, key=lambda x: x.get("referencia", ""), reverse=True)[0]
-        val = latest.get("preco_mediano") if item == "insumo" else latest.get("custo_total")
+        val = latest.get("preco")
 
         return {
             "codigo": int(codigo),
@@ -390,7 +480,6 @@ class SinapiStore:
 
     def buscar_encargos(self, estado: Optional[str] = None, **kwargs) -> dict:
         """Busca encargos sociais (compatível com /encargos)."""
-        # Encargos são derivados dos dados carregados
         return {
             "estado": estado.upper() if estado else None,
             "encargos": [],
@@ -410,8 +499,8 @@ class SinapiStore:
         ibge: Optional[int] = None,
         regiao: Optional[str] = None,
         **kwargs,
-    ) -> dict:
-        """Lista estados disponíveis (compatível com /estados)."""
+    ) -> list:
+        """Lista estados disponíveis (compatível com /estados). Returns flat list."""
         from api.data_loader import ESTADOS_INFO
 
         result = []
@@ -420,7 +509,7 @@ class SinapiStore:
                 continue
             if ibge and info["ibge"] != int(ibge):
                 continue
-            if regiao and info["regiao"] != regiao.lower():
+            if regiao and info["regiao"] != regiao.upper():
                 continue
 
             result.append({
@@ -428,10 +517,9 @@ class SinapiStore:
                 "nome": info["nome"],
                 "ibge": info["ibge"],
                 "regiao": info["regiao"],
-                "disponivel": uf in self._estados,
             })
 
-        return {"estados": result}
+        return result
 
     def gerar_orcamento(
         self,
@@ -453,23 +541,28 @@ class SinapiStore:
         regime_up = regime.upper()
         bdi_pct = float(bdi) if bdi else 0.0
 
+        from api.data_loader import ESTADOS_INFO
+        estado_info = ESTADOS_INFO.get(estado_up, {})
+        estado_label = f"{estado_info.get('nome', estado_up)} ({estado_up})"
+
         parsed_items = []
-        total = 0.0
+        total_insumos = 0.0
 
         for part in itens.split(","):
             part = part.strip()
             if not part:
                 continue
-            # Parse "C:12321@3.2" or "I:234@12.5"
             m = re.match(r"([CI]):(\d+)@([\d.]+)", part, re.IGNORECASE)
             if not m:
                 continue
 
-            tipo = "composicao" if m.group(1).upper() == "C" else "insumo"
+            tipo_key = m.group(1).upper()
+            tipo_label = "Composição" if tipo_key == "C" else "Insumo"
+            tipo_source = "composicao" if tipo_key == "C" else "insumo"
             codigo = int(m.group(2))
             qtd = float(m.group(3))
 
-            if tipo == "insumo":
+            if tipo_source == "insumo":
                 candidates = self._insumos_by_codigo.get(codigo, [])
             else:
                 candidates = self._composicoes_by_codigo.get(codigo, [])
@@ -479,35 +572,34 @@ class SinapiStore:
 
             if candidates:
                 item_data = candidates[0]
-                unit_val = item_data.get("preco_mediano") if tipo == "insumo" else item_data.get("custo_total")
-                unit_val = unit_val or 0.0
+                unit_val = item_data.get("preco") or 0.0
             else:
-                item_data = {"codigo": codigo, "descricao": "Não encontrado"}
+                item_data = {"codigo": codigo, "nome": "Não encontrado"}
                 unit_val = 0.0
 
             subtotal = unit_val * qtd
-            total += subtotal
+            total_insumos += subtotal
 
             parsed_items.append({
-                "tipo": tipo,
+                "tipo": tipo_label,
                 "codigo": codigo,
-                "descricao": item_data.get("descricao", ""),
-                "unidade": item_data.get("unidade", ""),
+                "nome": item_data.get("nome", ""),
                 "quantidade": qtd,
-                "preco_unitario": unit_val,
+                "preco_unit": unit_val,
                 "subtotal": round(subtotal, 2),
             })
 
-        bdi_valor = round(total * bdi_pct / 100, 2) if bdi_pct else 0.0
+        total_geral = round(total_insumos + (total_insumos * bdi_pct / 100), 2) if bdi_pct else round(total_insumos, 2)
 
         return {
+            "totais": {
+                "total_insumos": round(total_insumos, 2),
+                "total_geral": total_geral,
+                "bdi_percentual": bdi_pct,
+                "regime": regime_up,
+                "estado": estado_label,
+            },
             "itens": parsed_items,
-            "subtotal": round(total, 2),
-            "bdi_percentual": bdi_pct,
-            "bdi_valor": bdi_valor,
-            "total": round(total + bdi_valor, 2),
-            "estado": estado_up,
-            "regime": regime_up,
         }
 
 

@@ -12,6 +12,7 @@ import zipfile
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import JSONResponse
 
 from api.deps import verify_api_key
 from api.data_store import store
@@ -228,7 +229,7 @@ async def estados(request: Request):
     params = dict(request.query_params)
     if "ibge" in params:
         params["ibge"] = int(params["ibge"])
-    return store.listar_estados(**params)
+    return JSONResponse(content=store.listar_estados(**params))
 
 
 # ---- Orçamento -------------------------------------------------------------

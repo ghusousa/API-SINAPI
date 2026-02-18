@@ -113,8 +113,8 @@ def test_insumos_busca(client: httpx.Client) -> bool:
     print(f"    Encontrados: {data.get('total', 0)} insumos")
     if data.get("data"):
         item = data["data"][0]
-        print(f"    Exemplo: {item.get('codigo')} - {item.get('descricao')} "
-              f"= R$ {item.get('preco_mediano')}/{item.get('unidade')}")
+        print(f"    Exemplo: {item.get('codigo')} - {item.get('nome')} "
+              f"= R$ {item.get('preco_naodesonerado')}/{item.get('unidade')}")
     return data.get("total", 0) > 0
 
 
@@ -142,7 +142,7 @@ def test_insumos_regime(client: httpx.Client) -> bool:
         return False
     data = resp.json()
     return (data.get("total", 0) >= 1
-            and data["data"][0].get("regime") == "DESONERADO")
+            and data["data"][0].get("preco_desonerado") is not None)
 
 
 def test_composicoes_busca(client: httpx.Client) -> bool:
@@ -169,7 +169,7 @@ def test_composicao_detalhe(client: httpx.Client) -> bool:
     if resp.status_code != 200:
         return False
     data = resp.json()
-    print(f"    Composição: {data.get('codigo')} - {data.get('descricao')}")
+    print(f"    Composição: {data.get('codigo')} - {data.get('nome')}")
     print(f"    Itens: {len(data.get('itens', []))}")
     return data.get("codigo") == 87316 and "itens" in data
 
@@ -235,7 +235,7 @@ def test_estados(client: httpx.Client) -> bool:
     if resp.status_code != 200:
         return False
     data = resp.json()
-    total = len(data.get("estados", []))
+    total = len(data)
     print(f"    Estados: {total}")
     return total == 27
 
@@ -250,8 +250,7 @@ def test_estados_filtro(client: httpx.Client) -> bool:
     if resp.status_code != 200:
         return False
     data = resp.json()
-    estados = data.get("estados", [])
-    return len(estados) == 1 and estados[0]["uf"] == "SP"
+    return len(data) == 1 and data[0]["uf"] == "SP"
 
 
 def test_orcamento(client: httpx.Client) -> bool:
@@ -269,9 +268,9 @@ def test_orcamento(client: httpx.Client) -> bool:
         return False
     data = resp.json()
     print(f"    Itens: {len(data.get('itens', []))}")
-    print(f"    Subtotal: R$ {data.get('subtotal', 0):.2f}")
-    print(f"    Total: R$ {data.get('total', 0):.2f}")
-    return data.get("total", 0) > 0
+    print(f"    Total Insumos: R$ {data.get('totais', {}).get('total_insumos', 0):.2f}")
+    print(f"    Total Geral: R$ {data.get('totais', {}).get('total_geral', 0):.2f}")
+    return data.get("totais", {}).get("total_geral", 0) > 0
 
 
 def test_orcamento_bdi(client: httpx.Client) -> bool:
@@ -289,7 +288,7 @@ def test_orcamento_bdi(client: httpx.Client) -> bool:
     if resp.status_code != 200:
         return False
     data = resp.json()
-    return data.get("bdi_valor", 0) > 0 and data.get("total", 0) > data.get("subtotal", 0)
+    return data.get("totais", {}).get("total_geral", 0) > data.get("totais", {}).get("total_insumos", 0)
 
 
 def test_encargos(client: httpx.Client) -> bool:

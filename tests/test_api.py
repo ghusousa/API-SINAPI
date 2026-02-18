@@ -190,7 +190,7 @@ class TestInsumos:
         assert resp.status_code == 200
         data = resp.json()
         assert data["total"] >= 1
-        assert "CIMENTO" in data["data"][0]["descricao"].upper()
+        assert "CIMENTO" in data["data"][0]["nome"].upper()
 
     @pytest.mark.anyio
     async def test_buscar_por_codigo(self, headers):
@@ -223,7 +223,7 @@ class TestInsumos:
         assert resp.status_code == 200
         data = resp.json()
         assert data["total"] >= 1
-        assert data["data"][0]["regime"] == "DESONERADO"
+        assert data["data"][0]["preco_desonerado"] is not None
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +343,7 @@ class TestEstados:
             resp = await ac.get("/estados", headers=headers)
         assert resp.status_code == 200
         data = resp.json()
-        assert len(data["estados"]) == 27  # All Brazilian states
+        assert len(data) == 27  # All Brazilian states (flat list)
 
     @pytest.mark.anyio
     async def test_listar_por_uf(self, headers):
@@ -352,17 +352,17 @@ class TestEstados:
             resp = await ac.get("/estados?estado=SP", headers=headers)
         assert resp.status_code == 200
         data = resp.json()
-        assert len(data["estados"]) == 1
-        assert data["estados"][0]["uf"] == "SP"
+        assert len(data) == 1
+        assert data[0]["uf"] == "SP"
 
     @pytest.mark.anyio
     async def test_listar_por_regiao(self, headers):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
-            resp = await ac.get("/estados?regiao=sudeste", headers=headers)
+            resp = await ac.get("/estados?regiao=SUDESTE", headers=headers)
         assert resp.status_code == 200
         data = resp.json()
-        assert all(e["regiao"] == "sudeste" for e in data["estados"])
+        assert all(e["regiao"] == "SUDESTE" for e in data)
 
 
 class TestOrcamento:
@@ -376,9 +376,9 @@ class TestOrcamento:
             )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["total"] > 0
+        assert data["totais"]["total_geral"] > 0
         assert len(data["itens"]) == 2
-        assert data["estado"] == "SP"
+        assert "São Paulo (SP)" in data["totais"]["estado"]
 
     @pytest.mark.anyio
     async def test_gerar_com_bdi(self, headers):
@@ -390,6 +390,5 @@ class TestOrcamento:
             )
         assert resp.status_code == 200
         data = resp.json()
-        assert data["bdi_percentual"] == 25.0
-        assert data["bdi_valor"] > 0
-        assert data["total"] > data["subtotal"]
+        assert data["totais"]["bdi_percentual"] == 25.0
+        assert data["totais"]["total_geral"] > data["totais"]["total_insumos"]

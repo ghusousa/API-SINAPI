@@ -105,9 +105,9 @@ class TestLoadXlsx:
         data = load_xlsx_file(xlsx, "SP", "2026-01")
         insumo = data["insumos"][0]
         assert "codigo" in insumo
-        assert "descricao" in insumo
+        assert "nome" in insumo
         assert "unidade" in insumo
-        assert "preco_mediano" in insumo
+        assert "preco" in insumo
         assert "estado" in insumo
         assert "regime" in insumo
         assert "referencia" in insumo
@@ -122,9 +122,9 @@ class TestLoadXlsx:
         data = load_xlsx_file(xlsx, "SP", "2026-01")
         comp = data["composicoes"][0]
         assert "codigo" in comp
-        assert "descricao" in comp
+        assert "nome" in comp
         assert "unidade" in comp
-        assert "custo_total" in comp
+        assert "preco" in comp
 
     def test_carrega_analitico(self):
         xlsx = create_sample_sinapi_xlsx(estado="SP", referencia="2026-01")
@@ -151,7 +151,7 @@ class TestLoadXlsx:
         data = load_xlsx_file(xlsx, "RJ", "2025-12")
         for insumo in data["insumos"]:
             assert insumo["estado"] == "RJ"
-            assert insumo["referencia"] == "2025-12"
+            assert insumo["referencia"] == "2025-12-01"
 
 
 # ---------------------------------------------------------------------------
@@ -303,7 +303,7 @@ class TestHyperlinkInCodigo:
 
         data = load_xlsx_file(buf, "SP", "2026-01")
         assert len(data["insumos"]) == 1
-        assert data["insumos"][0]["preco_mediano"] == 0.62  # Must be the price, not "CAIXA"
+        assert data["insumos"][0]["preco"] == 0.62  # Must be the price, not "CAIXA"
 
 
 # ---------------------------------------------------------------------------
@@ -372,9 +372,9 @@ class TestLoadZipReal:
         data = load_zip_file(zipbuf)
         ins = data["insumos"][0]
         assert "codigo" in ins
-        assert "descricao" in ins
+        assert "nome" in ins
         assert "unidade" in ins
-        assert "preco_mediano" in ins
+        assert "preco" in ins
         assert "estado" in ins
         assert "regime" in ins
 
@@ -383,8 +383,8 @@ class TestLoadZipReal:
         data = load_zip_file(zipbuf)
         comp = data["composicoes"][0]
         assert "codigo" in comp
-        assert "descricao" in comp
-        assert "custo_total" in comp
+        assert "nome" in comp
+        assert "preco" in comp
 
     def test_analitico_campos(self):
         zipbuf = create_sample_sinapi_zip_real(estados=["SP"])
@@ -512,7 +512,7 @@ class TestParseReferenciaNacional:
                       if i["codigo"] == 370 and i["estado"] == "SP"
                       and i["regime"] == "NAO_DESONERADO"]
         assert len(sp_cimento) == 1
-        assert sp_cimento[0]["preco_mediano"] == 0.62
+        assert sp_cimento[0]["preco"] == 0.62
 
     def test_composicao_custo_correto(self):
         wb = _create_national_xlsx()
@@ -522,14 +522,14 @@ class TestParseReferenciaNacional:
                         if c["codigo"] == 87316 and c["estado"] == "RJ"
                         and c["regime"] == "NAO_DESONERADO"]
         assert len(rj_argamassa) == 1
-        assert rj_argamassa[0]["custo_total"] == 492.50
+        assert rj_argamassa[0]["preco"] == 492.50
 
     def test_referencia_preenchida(self):
         wb = _create_national_xlsx()
         data = parse_referencia_xlsx(wb, "2026-01")
         wb.close()
         for ins in data["insumos"]:
-            assert ins["referencia"] == "2026-01"
+            assert ins["referencia"] == "2026-01-01"
 
     def test_ignora_aba_desconhecida(self):
         wb = _create_national_xlsx()
