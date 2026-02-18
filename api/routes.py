@@ -206,10 +206,12 @@ async def previsao(
 # ---- Encargos --------------------------------------------------------------
 
 @router.get("/encargos", dependencies=[Depends(verify_api_key)])
-async def encargos(request: Request):
+async def encargos(
+    estado: Optional[str] = Query(None),
+    regime: Optional[str] = Query("NAO_DESONERADO"),
+):
     """Busca encargos sociais."""
-    params = dict(request.query_params)
-    return store.buscar_encargos(**params)
+    return store.buscar_encargos(estado=estado, regime=regime)
 
 
 # ---- Indicadores -----------------------------------------------------------
@@ -227,8 +229,6 @@ async def indicadores(request: Request):
 async def estados(request: Request):
     """Lista estados disponíveis."""
     params = dict(request.query_params)
-    if "ibge" in params:
-        params["ibge"] = int(params["ibge"])
     return JSONResponse(content=store.listar_estados(**params))
 
 

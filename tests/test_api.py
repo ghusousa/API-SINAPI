@@ -264,8 +264,9 @@ class TestComposicoes:
             resp = await ac.get("/composicao_explode?codigo=87316&estado=sp", headers=headers)
         assert resp.status_code == 200
         data = resp.json()
-        assert data["codigo"] == 87316
-        assert data["total_itens"] >= 1
+        assert data["composicao"]["codigo"] == 87316
+        assert len(data["insumos"]) >= 1
+        assert "totais" in data
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +282,7 @@ class TestHistorico:
         assert resp.status_code == 200
         data = resp.json()
         assert data["codigo"] == 370
-        assert data["item"] == "insumo"
+        assert "estado" in data
 
     @pytest.mark.anyio
     async def test_comparar(self, headers):
@@ -353,7 +354,8 @@ class TestEstados:
         assert resp.status_code == 200
         data = resp.json()
         assert len(data) == 1
-        assert data[0]["uf"] == "SP"
+        assert data[0]["sigla"] == "SP"
+        assert "disponivel" in data[0]
 
     @pytest.mark.anyio
     async def test_listar_por_regiao(self, headers):

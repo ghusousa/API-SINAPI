@@ -306,18 +306,21 @@ class SinapiStore:
         if regime:
             analitico = [a for a in analitico if a.get("regime", "").upper() == regime.upper()]
 
-        # Format analítico items with nome, preco_unitario, preco_total
+        # Format analítico items with descricao, preco_unitario, preco_total, tipo
         formatted_items = []
         for a in analitico:
             coef = a.get("coeficiente", 0) or 0
             pu = a.get("preco_unitario") or 0
+            item_codigo = a.get("item_codigo")
+            tipo = "COMPOSICAO" if item_codigo and item_codigo in self._composicoes_by_codigo else "INSUMO"
             formatted_items.append({
-                "codigo": a.get("item_codigo"),
-                "nome": a.get("nome", ""),
+                "codigo": item_codigo,
+                "descricao": a.get("nome", ""),
                 "unidade": a.get("unidade", ""),
                 "coeficiente": coef,
                 "preco_unitario": a.get("preco_unitario"),
                 "preco_total": round(coef * pu, 2),
+                "tipo": tipo,
             })
 
         comp["itens"] = formatted_items
@@ -331,29 +334,69 @@ class SinapiStore:
         **kwargs,
     ) -> dict:
         """Explode composição em insumos (compatível com /composicao_explode)."""
-        analitico = self._analitico_by_comp.get(int(codigo), [])
+        codigo = int(codigo)
+
+        # Get the composition itself (merged prices)
+        comp_items = self._composicoes_by_codigo.get(codigo, [])
+        if estado:
+            comp_items = [i for i in comp_items if i.get("estado", "").upper() == estado.upper()]
+        merged = self._merge_composicao_prices(comp_items)
+        comp_info = merged[0] if merged else {
+            "codigo": codigo, "nome": "", "unidade": "",
+            "preco_desonerado": None, "preco_naodesonerado": None,
+        }
+
+        analitico = self._analitico_by_comp.get(codigo, [])
         if estado:
             analitico = [a for a in analitico if a.get("estado", "").upper() == estado.upper()]
         if regime:
             analitico = [a for a in analitico if a.get("regime", "").upper() == regime.upper()]
 
-        formatted_items = []
+        insumos = []
+        count_insumo = 0
+        count_mao_de_obra = 0
+        count_equipamento = 0
+        count_material = 0
         for a in analitico:
             coef = a.get("coeficiente", 0) or 0
             pu = a.get("preco_unitario") or 0
-            formatted_items.append({
-                "codigo": a.get("item_codigo"),
+            item_codigo = a.get("item_codigo")
+            tipo = "COMPOSICAO" if item_codigo and item_codigo in self._composicoes_by_codigo else "INSUMO"
+            insumos.append({
+                "codigo": item_codigo,
                 "nome": a.get("nome", ""),
                 "unidade": a.get("unidade", ""),
                 "coeficiente": coef,
                 "preco_unitario": a.get("preco_unitario"),
                 "preco_total": round(coef * pu, 2),
+                "tipo": tipo,
             })
+            # Count by original tipo field from data
+            orig_tipo = (a.get("tipo") or "").upper()
+            if "MAO" in orig_tipo or "MÃO" in orig_tipo:
+                count_mao_de_obra += 1
+            elif "EQUIP" in orig_tipo:
+                count_equipamento += 1
+            elif "MATERIAL" in orig_tipo:
+                count_material += 1
+            else:
+                count_insumo += 1
 
         return {
-            "codigo": int(codigo),
-            "itens": formatted_items,
-            "total_itens": len(formatted_items),
+            "composicao": {
+                "codigo": comp_info.get("codigo", codigo),
+                "nome": comp_info.get("nome", ""),
+                "unidade": comp_info.get("unidade", ""),
+                "preco_desonerado": comp_info.get("preco_desonerado"),
+                "preco_naodesonerado": comp_info.get("preco_naodesonerado"),
+            },
+            "insumos": insumos,
+            "totais": {
+                "insumos": count_insumo,
+                "mao_de_obra": count_mao_de_obra,
+                "equipamentos": count_equipamento,
+                "materiais": count_material,
+            },
         }
 
     # ------------------------------------------------------------------
@@ -376,24 +419,40 @@ class SinapiStore:
         if estado:
             items = [i for i in items if i.get("estado", "").upper() == estado.upper()]
 
-        historico = []
-        refs = {}
+        # Group by referencia, merge desonerado/nao_desonerado prices
+        by_ref: Dict[str, dict] = {}
         for i in items:
             ref = i.get("referencia", "")
-            val = i.get("preco")
-            if ref and ref not in refs:
-                refs[ref] = True
-                historico.append({
+            if not ref:
+                continue
+            if ref not in by_ref:
+                by_ref[ref] = {
                     "referencia": ref,
-                    "valor": val,
-                    "estado": i.get("estado"),
-                    "regime": i.get("regime"),
-                })
+                    "preco_desonerado": None,
+                    "preco_naodesonerado": None,
+                    "variacao": None,
+                }
+            regime = (i.get("regime") or "NAO_DESONERADO").upper()
+            preco = i.get("preco")
+            if regime == "DESONERADO":
+                by_ref[ref]["preco_desonerado"] = preco
+            else:
+                by_ref[ref]["preco_naodesonerado"] = preco
+
+        historico = sorted(by_ref.values(), key=lambda x: x.get("referencia", ""))
+
+        # Calculate variacao (percentage change from previous month)
+        for idx in range(len(historico)):
+            if idx > 0:
+                prev = historico[idx - 1].get("preco_naodesonerado") or historico[idx - 1].get("preco_desonerado")
+                curr = historico[idx].get("preco_naodesonerado") or historico[idx].get("preco_desonerado")
+                if prev and curr and prev != 0:
+                    historico[idx]["variacao"] = round((curr - prev) / prev * 100, 2)
 
         return {
             "codigo": int(codigo),
-            "item": item,
-            "historico": sorted(historico, key=lambda x: x.get("referencia", "")),
+            "estado": estado.upper() if estado else None,
+            "historico": historico,
         }
 
     def comparar(
@@ -414,25 +473,27 @@ class SinapiStore:
         if estado_list:
             items = [i for i in items if i.get("estado", "").upper() in estado_list]
 
-        comparacao = []
-        seen = set()
+        # Group by estado, merge regime prices
+        by_estado: Dict[str, dict] = {}
         for i in items:
-            key = (i.get("estado"), i.get("regime"))
-            if key in seen:
-                continue
-            seen.add(key)
-            val = i.get("preco")
-            comparacao.append({
-                "estado": i.get("estado"),
-                "valor": val,
-                "regime": i.get("regime"),
-                "referencia": i.get("referencia"),
-            })
+            est = i.get("estado", "")
+            if est not in by_estado:
+                by_estado[est] = {
+                    "estado": est,
+                    "preco_desonerado": None,
+                    "preco_naodesonerado": None,
+                    "referencia": i.get("referencia"),
+                }
+            regime = (i.get("regime") or "NAO_DESONERADO").upper()
+            preco = i.get("preco")
+            if regime == "DESONERADO":
+                by_estado[est]["preco_desonerado"] = preco
+            else:
+                by_estado[est]["preco_naodesonerado"] = preco
 
         return {
             "codigo": int(codigo),
-            "item": item,
-            "comparacao": comparacao,
+            "comparacao": list(by_estado.values()),
         }
 
     def previsao(
@@ -454,23 +515,24 @@ class SinapiStore:
 
         if estado:
             items = [i for i in items if i.get("estado", "").upper() == estado.upper()]
-        if regime:
-            items = [i for i in items if i.get("regime", "").upper() == regime.upper()]
 
         if not items:
-            return {"codigo": int(codigo), "item": item, "previsao": None}
+            return {"codigo": int(codigo), "previsao": None}
 
-        latest = sorted(items, key=lambda x: x.get("referencia", ""), reverse=True)[0]
-        val = latest.get("preco")
+        # Merge prices from both regimes for the latest referencia
+        merged = self._merge_insumo_prices(items) if item == "insumo" else self._merge_composicao_prices(items)
+        if not merged:
+            return {"codigo": int(codigo), "previsao": None}
+
+        latest = sorted(merged, key=lambda x: x.get("referencia", ""), reverse=True)[0]
 
         return {
             "codigo": int(codigo),
-            "item": item,
             "previsao": {
-                "valor_base": val,
+                "preco_desonerado": latest.get("preco_desonerado"),
+                "preco_naodesonerado": latest.get("preco_naodesonerado"),
                 "referencia_base": latest.get("referencia"),
-                "estado": latest.get("estado"),
-                "regime": latest.get("regime"),
+                "estado": latest.get("estado") if "estado" in latest else (estado.upper() if estado else None),
             },
         }
 
@@ -478,25 +540,33 @@ class SinapiStore:
     # Consultas - Encargos, Indicadores, Estados, Orçamento
     # ------------------------------------------------------------------
 
-    def buscar_encargos(self, estado: Optional[str] = None, **kwargs) -> dict:
+    def buscar_encargos(self, estado: Optional[str] = None, regime: Optional[str] = None, **kwargs) -> dict:
         """Busca encargos sociais (compatível com /encargos)."""
+        latest_ref = sorted(self._referencias)[-1] if self._referencias else None
         return {
             "estado": estado.upper() if estado else None,
-            "encargos": [],
-            "mensagem": "Encargos extraídos dos dados SINAPI carregados",
+            "regime": (regime or "NAO_DESONERADO").upper(),
+            "referencia": latest_ref,
+            "encargos": {
+                "horista": None,
+                "mensalista": None,
+                "servico": None,
+            },
         }
 
     def listar_indicadores(self, **kwargs) -> dict:
         """Lista indicadores econômicos (compatível com /indicadores)."""
+        latest_ref = sorted(self._referencias)[-1] if self._referencias else None
         return {
-            "indicadores": {},
-            "mensagem": "Indicadores não disponíveis nos dados SINAPI locais",
+            "referencia": latest_ref,
+            "cub": {},
+            "incc": None,
+            "igpm": None,
         }
 
     def listar_estados(
         self,
         estado: Optional[str] = None,
-        ibge: Optional[int] = None,
         regiao: Optional[str] = None,
         **kwargs,
     ) -> list:
@@ -507,16 +577,14 @@ class SinapiStore:
         for uf, info in ESTADOS_INFO.items():
             if estado and uf != estado.upper():
                 continue
-            if ibge and info["ibge"] != int(ibge):
-                continue
             if regiao and info["regiao"] != regiao.upper():
                 continue
 
             result.append({
-                "uf": uf,
+                "sigla": uf,
                 "nome": info["nome"],
-                "ibge": info["ibge"],
                 "regiao": info["regiao"],
+                "disponivel": uf in self._estados,
             })
 
         return result
