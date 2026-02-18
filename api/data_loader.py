@@ -113,6 +113,11 @@ def _detect_file_type_from_filename(filename: str) -> Optional[str]:
     return None
 
 
+_RE_HYPERLINK = re.compile(
+    r'=HYPERLINK\("(?:[^"\\]|\\.)*",\s*"?(\d+)"?\)', re.IGNORECASE
+)
+
+
 def _extract_hyperlink_value(val):
     """Extrai valor numérico de fórmulas HYPERLINK em células CODIGO.
 
@@ -123,20 +128,31 @@ def _extract_hyperlink_value(val):
     if isinstance(val, (int, float)):
         return val
     s = str(val).strip()
-    m = re.match(r'=HYPERLINK\("(?:[^"\\]|\\.)*",\s*"?(\d+)"?\)', s, re.IGNORECASE)
+    m = _RE_HYPERLINK.match(s)
     if m:
         return int(m.group(1))
     return val
 
 
 def _find_header_row(ws, max_rows=50) -> Tuple[Optional[int], Dict[str, int]]:
-    """Encontra a linha de cabeçalho e mapeia colunas por nome."""
+    """Encontra a linha de cabeçalho e mapeia colunas por nome.
+
+    Escaneia até max_rows (50 por padrão) porque arquivos SINAPI reais da
+    Caixa têm linhas de metadados antes do cabeçalho (tipicamente 4-7 linhas).
+    """
+    empty_streak = 0
     for row_idx in range(1, max_rows + 1):
         cells = {
             _normalise(str(c.value or "")): c.column - 1
             for c in ws[row_idx]
             if c.value
         }
+        if not cells:
+            empty_streak += 1
+            if empty_streak >= 5:
+                break
+            continue
+        empty_streak = 0
         # Procura pela coluna CODIGO que é comum em todas as abas
         for key in cells:
             if "CODIGO" in key:
