@@ -204,12 +204,89 @@ Exceções disponíveis: `ApiException`, `AuthenticationException`, `NotFoundExc
 
 ---
 
-## Testes
+## Como Testar
+
+Há **3 formas** de testar a API:
+
+### 1. Script de teste rápido (recomendado)
+
+Executa o servidor com dados de amostra e testa **todos os 19 endpoints automaticamente**:
 
 ```bash
-pip install pytest
-pytest
+python scripts/testar_api.py
 ```
+
+Saída esperada:
+```
+🚀 Iniciando servidor API SINAPI na porta 8777...
+✓ Servidor pronto!
+
+  1. Upload de Dados SINAPI
+  ✓ Upload XLSX com dados de amostra: OK
+
+  2. Autenticação (X-API-Key)
+  ✓ Rejeita requisição sem chave: OK
+  ✓ Rejeita chave inválida: OK
+
+  3. Insumos (/insumos)
+  ✓ Buscar por nome: OK
+  ✓ Buscar por código: OK
+  ...
+
+  ✓ TODOS OS 19 TESTES PASSARAM!
+```
+
+### 2. Testes unitários (pytest)
+
+```bash
+pip install pytest anyio pytest-anyio
+pytest -v
+```
+
+Cobertura:
+- `tests/test_api.py` — 24 testes dos endpoints da API
+- `tests/test_client.py` — 27 testes do cliente Python
+- `tests/test_data_loader.py` — 27 testes do parser XLSX/ZIP
+
+### 3. Teste manual (Swagger UI + curl)
+
+Inicie o servidor e use a interface interativa:
+
+```bash
+# Iniciar sem autenticação (modo desenvolvimento)
+uvicorn api.app:app --port 8000
+
+# Abra no navegador:
+# http://localhost:8000/docs
+```
+
+Ou teste via curl:
+
+```bash
+# 1. Carregar dados de amostra (gera um XLSX de teste)
+python -c "
+from tests.sample_data import create_sample_sinapi_xlsx
+xlsx = create_sample_sinapi_xlsx('SP', '2026-01')
+with open('/tmp/sinapi_sp.xlsx', 'wb') as f:
+    f.write(xlsx.getvalue())
+print('Arquivo criado: /tmp/sinapi_sp.xlsx')
+"
+
+# 2. Fazer upload
+curl -X POST "http://localhost:8000/upload?estado=SP&referencia=2026-01" \
+  -F "file=@/tmp/sinapi_sp.xlsx"
+
+# 3. Consultar insumos
+curl "http://localhost:8000/insumos?nome=cimento&estado=SP"
+
+# 4. Detalhar composição
+curl "http://localhost:8000/composicao?codigo=87316&estado=SP"
+
+# 5. Gerar orçamento
+curl "http://localhost:8000/orcamento?itens=C:87316@2.0,I:370@100&estado=SP&regime=NAO_DESONERADO"
+```
+
+> **Nota:** Sem `API_KEYS` configurado, qualquer valor no header `X-API-Key` é aceito (modo desenvolvimento). Para testar autenticação, defina: `export API_KEYS="minha-chave"`
 
 ---
 
