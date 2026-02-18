@@ -11,3 +11,6 @@ build/
 pip-wheel-metadata/
 .venv/
 venv/
+data/
+*.xlsx
+*.zip

@@ -1,11 +1,8 @@
 # API-SINAPI
 
-API e cliente Python para a **API SINAPI do Orçamentador** ([www.orcamentador.com.br/api/docs](https://www.orcamentador.com.br/api/docs)).
+API e cliente Python para dados **SINAPI** (Sistema Nacional de Pesquisa de Custos e Índices da Construção Civil).
 
-Este projeto contém:
-
-1. **Servidor API** (`api/`) — API FastAPI que replica todos os endpoints da API oficial do Orçamentador, fazendo proxy das requisições.
-2. **Cliente Python** (`sinapi_client/`) — Biblioteca para consumo da API.
+Processa os arquivos XLSX/ZIP publicados mensalmente pela **Caixa Econômica Federal** e serve os dados através de endpoints compatíveis com a API do Orçamentador ([www.orcamentador.com.br/api/docs](https://www.orcamentador.com.br/api/docs)).
 
 ---
 
@@ -15,30 +12,38 @@ Este projeto contém:
 pip install -e .
 ```
 
-Requisitos: Python >= 3.8, [requests](https://pypi.org/project/requests/), [FastAPI](https://fastapi.tiangolo.com/), [uvicorn](https://www.uvicorn.org/), [httpx](https://www.python-httpx.org/).
+Requisitos: Python >= 3.8
 
 ---
 
 ## Servidor API
 
-O servidor replica todos os endpoints da API oficial do Orçamentador, protegidos por autenticação via `X-API-Key`.
-
-### Configuração
-
-Defina as variáveis de ambiente:
+### Iniciar
 
 ```bash
-# Chave(s) de API aceitas pelo nosso servidor (separadas por vírgula)
+# Opcional: definir chaves de API aceitas
 export API_KEYS="chave1,chave2"
 
-# Chave de API para acessar a API upstream do Orçamentador
-export UPSTREAM_API_KEY="SUA_CHAVE_ORCAMENTADOR"
+# Opcional: carregar dados automaticamente na inicialização
+export SINAPI_DATA_DIR="/caminho/para/arquivos/sinapi"
+
+uvicorn api.app:app --host 0.0.0.0 --port 8000
 ```
 
-### Iniciar o servidor
+### Carregar dados SINAPI
+
+Faça upload do arquivo ZIP mensal da Caixa (ex: `SINAPI-2026-01-formato-xlsx.zip`):
 
 ```bash
-uvicorn api.app:app --host 0.0.0.0 --port 8000
+curl -X POST "http://localhost:8000/upload" \
+  -F "file=@SINAPI-2026-01-formato-xlsx.zip"
+```
+
+Ou de um XLSX avulso por estado:
+
+```bash
+curl -X POST "http://localhost:8000/upload?estado=SP&referencia=2026-01" \
+  -F "file=@SINAPI_Preco_Ref_SP_202601.xlsx"
 ```
 
 ### Documentação interativa
@@ -49,9 +54,10 @@ Acesse `http://localhost:8000/docs` para a interface Swagger UI.
 
 | Endpoint              | Descrição                                      |
 |-----------------------|------------------------------------------------|
+| `POST /upload`        | Carrega arquivo SINAPI (ZIP ou XLSX)            |
 | `GET /insumos`        | Busca insumos por nome, código ou filtros       |
 | `GET /composicoes`    | Busca composições por nome, código ou filtros   |
-| `GET /composicao`     | Detalha uma composição específica               |
+| `GET /composicao`     | Detalha uma composição com seus itens           |
 | `GET /composicao_explode` | Lista todos os insumos de uma composição    |
 | `GET /historico`      | Histórico de preços (insumo ou composição)      |
 | `GET /comparar`       | Compara preço entre estados                     |
@@ -61,10 +67,20 @@ Acesse `http://localhost:8000/docs` para a interface Swagger UI.
 | `GET /estados`        | Lista estados disponíveis                       |
 | `GET /orcamento`      | Gera orçamento com base em itens e quantidades  |
 
-### Exemplo de chamada
+### Exemplos de uso
 
 ```bash
-curl -H "X-API-Key: SUA_CHAVE" "http://localhost:8000/insumos?nome=cimento&estado=sp&limit=10"
+# Buscar insumos
+curl -H "X-API-Key: SUA_CHAVE" \
+  "http://localhost:8000/insumos?nome=cimento&estado=SP&limit=10"
+
+# Detalhar composição
+curl -H "X-API-Key: SUA_CHAVE" \
+  "http://localhost:8000/composicao?codigo=87316&estado=SP"
+
+# Gerar orçamento
+curl -H "X-API-Key: SUA_CHAVE" \
+  "http://localhost:8000/orcamento?itens=C:87316@2.0,I:370@100&estado=SP&regime=NAO_DESONERADO"
 ```
 
 ---
@@ -199,6 +215,6 @@ pytest
 
 ## Links
 
-- 🌐 Site: https://www.orcamentador.com.br
-- 📘 Documentação da API: https://www.orcamentador.com.br/api/docs
+- 📊 SINAPI Caixa: https://www.caixa.gov.br/poder-publico/modernizacao-gestao/sinapi/
+- 📘 API Orçamentador (referência): https://www.orcamentador.com.br/api/docs
 - 🐙 SDK oficial (PHP): https://github.com/orcamentador/orcamentador-sdk
