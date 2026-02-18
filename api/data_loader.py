@@ -70,9 +70,11 @@ def _normalise(text: str) -> str:
     return "".join(c for c in nfkd if not unicodedata.combining(c)).upper()
 
 
-def _detect_regime(sheet_name: str) -> str:
-    """Detecta o regime (DESONERADO/NAO_DESONERADO) pelo nome da aba."""
-    name = _normalise(sheet_name)
+def _detect_regime(name_or_path: str) -> str:
+    """Detecta o regime (DESONERADO/NAO_DESONERADO) pelo nome da aba ou arquivo."""
+    name = _normalise(name_or_path)
+    if "NAODESON" in name.replace(" ", "").replace("_", ""):
+        return "NAO_DESONERADO"
     if "NAO" in name and "DESON" in name:
         return "NAO_DESONERADO"
     if "SEM" in name and "DESON" in name:
@@ -99,7 +101,35 @@ def _detect_sheet_type(sheet_name: str) -> Optional[str]:
     return None
 
 
-def _find_header_row(ws, max_rows=15) -> Tuple[Optional[int], Dict[str, int]]:
+def _detect_file_type_from_filename(filename: str) -> Optional[str]:
+    """Detecta tipo de dados pelo padrão de nome do arquivo XLSX real SINAPI."""
+    name = _normalise(os.path.basename(filename))
+    if "ANALITICO" in name or "ANALITICA" in name:
+        return "analitico"
+    if "SINTETICO" in name or "SINTETICA" in name:
+        return "composicao"
+    if "PRECO" in name and "INSUMO" in name:
+        return "insumo"
+    return None
+
+
+def _extract_hyperlink_value(val):
+    """Extrai valor numérico de fórmulas HYPERLINK em células CODIGO.
+
+    Células SINAPI podem conter fórmulas como =HYPERLINK("...", 12345).
+    """
+    if val is None:
+        return None
+    if isinstance(val, (int, float)):
+        return val
+    s = str(val).strip()
+    m = re.match(r'=HYPERLINK\("(?:[^"\\]|\\.)*",\s*"?(\d+)"?\)', s, re.IGNORECASE)
+    if m:
+        return int(m.group(1))
+    return val
+
+
+def _find_header_row(ws, max_rows=50) -> Tuple[Optional[int], Dict[str, int]]:
     """Encontra a linha de cabeçalho e mapeia colunas por nome."""
     for row_idx in range(1, max_rows + 1):
         cells = {
@@ -127,9 +157,10 @@ def _safe_float(val) -> Optional[float]:
 
 
 def _safe_int(val) -> Optional[int]:
-    """Converte valor para int de forma segura."""
+    """Converte valor para int de forma segura, tratando fórmulas HYPERLINK."""
     if val is None:
         return None
+    val = _extract_hyperlink_value(val)
     try:
         return int(float(val))
     except (ValueError, TypeError):
@@ -279,6 +310,139 @@ def parse_xlsx_workbook(wb, estado: str, referencia: str) -> dict:
     return result
 
 
+def parse_single_type_xlsx(wb, file_type: str, estado: str, referencia: str,
+                           regime: str) -> dict:
+    """Processa um workbook XLSX de tipo único (formato real SINAPI com arquivos separados).
+
+    No formato real da Caixa, cada arquivo XLSX contém apenas um tipo de dado
+    (insumos, composições sintético ou analítico) em uma única aba de dados.
+
+    Args:
+        wb: Workbook openpyxl.
+        file_type: 'insumo', 'composicao' ou 'analitico'.
+        estado: UF (ex: 'SP').
+        referencia: Data de referência (ex: '2026-01').
+        regime: 'DESONERADO' ou 'NAO_DESONERADO'.
+
+    Returns:
+        dict com chaves 'insumos', 'composicoes', 'analitico'.
+    """
+    result = {"insumos": [], "composicoes": [], "analitico": []}
+    estado = estado.upper()
+
+    # Use the first (or active) sheet
+    ws = wb.active or wb[wb.sheetnames[0]]
+    header_row, columns = _find_header_row(ws)
+    if header_row is None:
+        return result
+
+    if file_type == "insumo":
+        col_codigo = _find_col(columns, "CODIGO")
+        col_desc = _find_col(columns, "DESCRICAO")
+        col_unidade = _find_col(columns, "UNIDADE")
+        col_preco = _find_col(columns, "PRECO", "MEDIANO", "CUSTO")
+
+        if col_codigo is None or col_desc is None:
+            return result
+
+        for row in ws.iter_rows(min_row=header_row + 1, values_only=True):
+            codigo = _safe_int(row[col_codigo] if col_codigo < len(row) else None)
+            if not codigo:
+                continue
+            desc = str(row[col_desc] if col_desc < len(row) else "") or ""
+            unidade = str(row[col_unidade] if col_unidade is not None and col_unidade < len(row) else "") or ""
+            preco = _safe_float(row[col_preco] if col_preco is not None and col_preco < len(row) else None)
+
+            result["insumos"].append({
+                "codigo": codigo,
+                "descricao": desc.strip(),
+                "unidade": unidade.strip(),
+                "preco_mediano": preco,
+                "estado": estado,
+                "regime": regime,
+                "referencia": referencia,
+                "fonte": "SINAPI",
+            })
+
+    elif file_type == "composicao":
+        col_codigo = _find_col(columns, "CODIGO")
+        col_desc = _find_col(columns, "DESCRICAO")
+        col_unidade = _find_col(columns, "UNIDADE")
+        col_custo = _find_col(columns, "CUSTO", "TOTAL", "PRECO")
+
+        if col_codigo is None or col_desc is None:
+            return result
+
+        for row in ws.iter_rows(min_row=header_row + 1, values_only=True):
+            codigo = _safe_int(row[col_codigo] if col_codigo < len(row) else None)
+            if not codigo:
+                continue
+            desc = str(row[col_desc] if col_desc < len(row) else "") or ""
+            unidade = str(row[col_unidade] if col_unidade is not None and col_unidade < len(row) else "") or ""
+            custo = _safe_float(row[col_custo] if col_custo is not None and col_custo < len(row) else None)
+
+            result["composicoes"].append({
+                "codigo": codigo,
+                "descricao": desc.strip(),
+                "unidade": unidade.strip(),
+                "custo_total": custo,
+                "estado": estado,
+                "regime": regime,
+                "referencia": referencia,
+                "fonte": "SINAPI",
+            })
+
+    elif file_type == "analitico":
+        col_comp = _find_col(columns, "COMPOSICAO", "COMP")
+        col_item = _find_col(columns, "ITEM", "INSUMO", "CODIGO")
+        col_tipo = _find_col(columns, "TIPO")
+        col_desc = _find_col(columns, "DESCRICAO")
+        col_unidade = _find_col(columns, "UNIDADE")
+        col_coef = _find_col(columns, "COEFICIENTE", "QUANTIDADE", "QUANT")
+        col_preco = _find_col(columns, "PRECO", "CUSTO", "UNITARIO")
+
+        if col_comp is None:
+            col_comp = col_item
+        if col_item is None:
+            return result
+
+        current_comp = None
+        for row in ws.iter_rows(min_row=header_row + 1, values_only=True):
+            comp_val = _safe_int(row[col_comp] if col_comp is not None and col_comp < len(row) else None)
+            item_val = _safe_int(row[col_item] if col_item < len(row) else None)
+
+            if comp_val and not item_val:
+                current_comp = comp_val
+                continue
+
+            if item_val and current_comp:
+                desc = str(row[col_desc] if col_desc is not None and col_desc < len(row) else "") or ""
+                unidade = str(row[col_unidade] if col_unidade is not None and col_unidade < len(row) else "") or ""
+                coef = _safe_float(row[col_coef] if col_coef is not None and col_coef < len(row) else None)
+                preco = _safe_float(row[col_preco] if col_preco is not None and col_preco < len(row) else None)
+
+                tipo = "INSUMO"
+                if col_tipo is not None and col_tipo < len(row) and row[col_tipo]:
+                    t = _normalise(str(row[col_tipo]))
+                    if "COMP" in t:
+                        tipo = "COMPOSICAO"
+
+                result["analitico"].append({
+                    "composicao_codigo": current_comp,
+                    "item_codigo": item_val,
+                    "tipo_item": tipo,
+                    "descricao": desc.strip(),
+                    "unidade": unidade.strip(),
+                    "coeficiente": coef or 0.0,
+                    "preco_unitario": preco,
+                    "estado": estado,
+                    "regime": regime,
+                    "referencia": referencia,
+                })
+
+    return result
+
+
 def load_xlsx_file(file_path_or_bytes, estado: str, referencia: str) -> dict:
     """Carrega dados de um arquivo XLSX SINAPI.
 
@@ -325,6 +489,11 @@ def _detect_referencia_from_filename(filename: str) -> Optional[str]:
 def load_zip_file(file_path_or_bytes) -> dict:
     """Carrega dados de um arquivo ZIP SINAPI (contendo XLSX por estado).
 
+    Suporta dois formatos:
+    - Formato simples: XLSX com múltiplas abas diretamente no ZIP.
+    - Formato real Caixa: Pastas por UF/regime com arquivos XLSX separados
+      (Preco_Ref_Insumos, Composicoes_Sintetico, Composicoes_Analitico).
+
     Args:
         file_path_or_bytes: Caminho do arquivo ZIP ou bytes.
 
@@ -356,8 +525,23 @@ def load_zip_file(file_path_or_bytes) -> dict:
 
             ref = _detect_referencia_from_filename(name) or referencia
 
+            # Detect file type from filename (real SINAPI format)
+            file_type = _detect_file_type_from_filename(name)
+
             xlsx_bytes = zf.read(name)
-            data = load_xlsx_file(io.BytesIO(xlsx_bytes), estado, ref)
+
+            if file_type is not None:
+                # Real format: regime from folder/filename, type from filename
+                regime = _detect_regime(name)
+                wb = load_workbook(io.BytesIO(xlsx_bytes), read_only=True, data_only=True)
+                try:
+                    data = parse_single_type_xlsx(wb, file_type, estado, ref, regime)
+                finally:
+                    wb.close()
+            else:
+                # Legacy format: multi-sheet XLSX
+                data = load_xlsx_file(io.BytesIO(xlsx_bytes), estado, ref)
+
             combined["insumos"].extend(data["insumos"])
             combined["composicoes"].extend(data["composicoes"])
             combined["analitico"].extend(data["analitico"])
