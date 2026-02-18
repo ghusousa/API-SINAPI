@@ -41,9 +41,6 @@ Requisitos: Python >= 3.8
 ### Iniciar
 
 ```bash
-# Opcional: definir chaves de API aceitas
-export API_KEYS="chave1,chave2"
-
 # Opcional: carregar dados automaticamente na inicialização
 export SINAPI_DATA_DIR="/caminho/para/arquivos/sinapi"
 
@@ -91,40 +88,23 @@ Acesse `http://localhost:8000/docs` para a interface Swagger UI.
 
 ```bash
 # Buscar insumos
-curl -H "X-API-Key: SUA_CHAVE" \
-  "http://localhost:8000/insumos?nome=cimento&estado=SP&limit=10"
+curl "http://localhost:8000/insumos?nome=cimento&estado=SP&limit=10"
 
 # Detalhar composição
-curl -H "X-API-Key: SUA_CHAVE" \
-  "http://localhost:8000/composicao?codigo=87316&estado=SP"
+curl "http://localhost:8000/composicao?codigo=87316&estado=SP"
 
 # Gerar orçamento
-curl -H "X-API-Key: SUA_CHAVE" \
-  "http://localhost:8000/orcamento?itens=C:87316@2.0,I:370@100&estado=SP&regime=NAO_DESONERADO"
+curl "http://localhost:8000/orcamento?itens=C:87316@2.0,I:370@100&estado=SP&regime=NAO_DESONERADO"
 ```
 
 ---
 
 ## Cliente Python
 
-## Autenticação
-
-A autenticação é feita via chave de API, enviada no header `X-API-Key`.
-
-Você pode informar a chave diretamente ou pela variável de ambiente `ORCAMENTADOR_API_KEY`:
-
-```bash
-export ORCAMENTADOR_API_KEY="SUA_API_KEY"
-```
-
 ```python
 from sinapi_client import Client
 
-# Via parâmetro
-client = Client(api_key="SUA_API_KEY")
-
-# Ou via variável de ambiente
-client = Client()
+client = Client(base_url="http://localhost:8000")
 ```
 
 ---
@@ -208,19 +188,17 @@ client.orcamento.gerar(
 ## Tratamento de erros
 
 ```python
-from sinapi_client import Client, AuthenticationException, ApiException
+from sinapi_client import Client, ApiException
 
-client = Client(api_key="SUA_API_KEY")
+client = Client(base_url="http://localhost:8000")
 
 try:
     resultado = client.insumos.buscar(nome="cimento")
-except AuthenticationException as e:
-    print(f"Erro de autenticação: {e}")
 except ApiException as e:
     print(f"Erro da API: {e}")
 ```
 
-Exceções disponíveis: `ApiException`, `AuthenticationException`, `NotFoundException`, `RateLimitException`, `ServerException`.
+Exceções disponíveis: `ApiException`, `NotFoundException`, `ServerException`.
 
 ---
 
@@ -244,16 +222,12 @@ Saída esperada:
   1. Upload de Dados SINAPI
   ✓ Upload XLSX com dados de amostra: OK
 
-  2. Autenticação (X-API-Key)
-  ✓ Rejeita requisição sem chave: OK
-  ✓ Rejeita chave inválida: OK
-
-  3. Insumos (/insumos)
+  2. Insumos (/insumos)
   ✓ Buscar por nome: OK
   ✓ Buscar por código: OK
   ...
 
-  ✓ TODOS OS 19 TESTES PASSARAM!
+  ✓ TODOS OS 17 TESTES PASSARAM!
 ```
 
 ### 2. Testes unitários (pytest)
@@ -273,7 +247,7 @@ Cobertura:
 Inicie o servidor e use a interface interativa:
 
 ```bash
-# Iniciar sem autenticação (modo desenvolvimento)
+# Iniciar o servidor
 uvicorn api.app:app --port 8000
 
 # Abra no navegador:
@@ -305,8 +279,6 @@ curl "http://localhost:8000/composicao?codigo=87316&estado=SP"
 # 5. Gerar orçamento
 curl "http://localhost:8000/orcamento?itens=C:87316@2.0,I:370@100&estado=SP&regime=NAO_DESONERADO"
 ```
-
-> **Nota:** Sem `API_KEYS` configurado, qualquer valor no header `X-API-Key` é aceito (modo desenvolvimento). Para testar autenticação, defina: `export API_KEYS="minha-chave"`
 
 ---
 

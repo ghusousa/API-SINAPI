@@ -25,7 +25,6 @@ import uvicorn
 # ---------------------------------------------------------------------------
 
 BASE_URL = "http://127.0.0.1:8777"
-API_KEY = "teste-local"
 
 
 def colored(text: str, color: str) -> str:
@@ -85,27 +84,11 @@ def test_upload(client: httpx.Client) -> bool:
     return data.get("insumos", 0) > 0
 
 
-def test_auth_sem_chave(client: httpx.Client) -> bool:
-    """Testa que requisição sem API key é rejeitada."""
-    resp = client.get(f"{BASE_URL}/estados")
-    return resp.status_code == 401
-
-
-def test_auth_chave_invalida(client: httpx.Client) -> bool:
-    """Testa que API key inválida é rejeitada."""
-    resp = client.get(
-        f"{BASE_URL}/estados",
-        headers={"X-API-Key": "chave-errada"},
-    )
-    return resp.status_code == 401
-
-
 def test_insumos_busca(client: httpx.Client) -> bool:
     """Testa busca de insumos por nome."""
     resp = client.get(
         f"{BASE_URL}/insumos",
         params={"nome": "cimento", "estado": "SP"},
-        headers={"X-API-Key": API_KEY},
     )
     if resp.status_code != 200:
         return False
@@ -123,7 +106,6 @@ def test_insumos_codigo(client: httpx.Client) -> bool:
     resp = client.get(
         f"{BASE_URL}/insumos",
         params={"codigo": 370, "estado": "SP"},
-        headers={"X-API-Key": API_KEY},
     )
     if resp.status_code != 200:
         return False
@@ -136,7 +118,6 @@ def test_insumos_regime(client: httpx.Client) -> bool:
     resp = client.get(
         f"{BASE_URL}/insumos",
         params={"codigo": 370, "estado": "SP", "regime": "DESONERADO"},
-        headers={"X-API-Key": API_KEY},
     )
     if resp.status_code != 200:
         return False
@@ -150,7 +131,6 @@ def test_composicoes_busca(client: httpx.Client) -> bool:
     resp = client.get(
         f"{BASE_URL}/composicoes",
         params={"nome": "argamassa", "estado": "SP"},
-        headers={"X-API-Key": API_KEY},
     )
     if resp.status_code != 200:
         return False
@@ -164,7 +144,6 @@ def test_composicao_detalhe(client: httpx.Client) -> bool:
     resp = client.get(
         f"{BASE_URL}/composicao",
         params={"codigo": 87316, "estado": "SP"},
-        headers={"X-API-Key": API_KEY},
     )
     if resp.status_code != 200:
         return False
@@ -179,7 +158,6 @@ def test_composicao_explode(client: httpx.Client) -> bool:
     resp = client.get(
         f"{BASE_URL}/composicao_explode",
         params={"codigo": 87316, "estado": "SP"},
-        headers={"X-API-Key": API_KEY},
     )
     if resp.status_code != 200:
         return False
@@ -192,7 +170,6 @@ def test_historico(client: httpx.Client) -> bool:
     resp = client.get(
         f"{BASE_URL}/historico",
         params={"codigo": 370, "item": "insumo", "estado": "SP"},
-        headers={"X-API-Key": API_KEY},
     )
     if resp.status_code != 200:
         return False
@@ -205,7 +182,6 @@ def test_comparar(client: httpx.Client) -> bool:
     resp = client.get(
         f"{BASE_URL}/comparar",
         params={"codigo": 370, "item": "insumo", "estados": "SP"},
-        headers={"X-API-Key": API_KEY},
     )
     if resp.status_code != 200:
         return False
@@ -218,7 +194,6 @@ def test_previsao(client: httpx.Client) -> bool:
     resp = client.get(
         f"{BASE_URL}/previsao",
         params={"codigo": 370, "item": "insumo", "estado": "SP"},
-        headers={"X-API-Key": API_KEY},
     )
     if resp.status_code != 200:
         return False
@@ -230,7 +205,6 @@ def test_estados(client: httpx.Client) -> bool:
     """Testa listagem de estados."""
     resp = client.get(
         f"{BASE_URL}/estados",
-        headers={"X-API-Key": API_KEY},
     )
     if resp.status_code != 200:
         return False
@@ -245,12 +219,11 @@ def test_estados_filtro(client: httpx.Client) -> bool:
     resp = client.get(
         f"{BASE_URL}/estados",
         params={"estado": "SP"},
-        headers={"X-API-Key": API_KEY},
     )
     if resp.status_code != 200:
         return False
     data = resp.json()
-    return len(data) == 1 and data[0]["uf"] == "SP"
+    return len(data) == 1 and data[0]["sigla"] == "SP"
 
 
 def test_orcamento(client: httpx.Client) -> bool:
@@ -262,7 +235,6 @@ def test_orcamento(client: httpx.Client) -> bool:
             "estado": "SP",
             "regime": "NAO_DESONERADO",
         },
-        headers={"X-API-Key": API_KEY},
     )
     if resp.status_code != 200:
         return False
@@ -283,7 +255,6 @@ def test_orcamento_bdi(client: httpx.Client) -> bool:
             "regime": "NAO_DESONERADO",
             "bdi": 25,
         },
-        headers={"X-API-Key": API_KEY},
     )
     if resp.status_code != 200:
         return False
@@ -296,7 +267,6 @@ def test_encargos(client: httpx.Client) -> bool:
     resp = client.get(
         f"{BASE_URL}/encargos",
         params={"estado": "SP"},
-        headers={"X-API-Key": API_KEY},
     )
     return resp.status_code == 200
 
@@ -305,7 +275,6 @@ def test_indicadores(client: httpx.Client) -> bool:
     """Testa endpoint de indicadores."""
     resp = client.get(
         f"{BASE_URL}/indicadores",
-        headers={"X-API-Key": API_KEY},
     )
     return resp.status_code == 200
 
@@ -322,11 +291,7 @@ def test_swagger_docs(client: httpx.Client) -> bool:
 
 def run_tests():
     """Executa todos os testes contra o servidor."""
-    import os
     import threading
-
-    # Configura API key para aceitar 'teste-local'
-    os.environ["API_KEYS"] = API_KEY
 
     # Inicia o servidor em thread separada
     print(colored("\n🚀 Iniciando servidor API SINAPI na porta 8777...", "cyan"))
@@ -363,18 +328,8 @@ def run_tests():
     print_result("Upload XLSX com dados de amostra", ok)
     results.append(ok)
 
-    # ---- Autenticação ----
-    print_header("2. Autenticação (X-API-Key)")
-    ok = test_auth_sem_chave(client)
-    print_result("Rejeita requisição sem chave", ok)
-    results.append(ok)
-
-    ok = test_auth_chave_invalida(client)
-    print_result("Rejeita chave inválida", ok)
-    results.append(ok)
-
     # ---- Insumos ----
-    print_header("3. Insumos (/insumos)")
+    print_header("2. Insumos (/insumos)")
     ok = test_insumos_busca(client)
     print_result("Buscar por nome", ok)
     results.append(ok)
@@ -388,7 +343,7 @@ def run_tests():
     results.append(ok)
 
     # ---- Composições ----
-    print_header("4. Composições (/composicoes, /composicao, /composicao_explode)")
+    print_header("3. Composições (/composicoes, /composicao, /composicao_explode)")
     ok = test_composicoes_busca(client)
     print_result("Buscar composições", ok)
     results.append(ok)
@@ -402,7 +357,7 @@ def run_tests():
     results.append(ok)
 
     # ---- Histórico / Comparar / Previsão ----
-    print_header("5. Histórico, Comparar e Previsão")
+    print_header("4. Histórico, Comparar e Previsão")
     ok = test_historico(client)
     print_result("Histórico de preço", ok)
     results.append(ok)
@@ -416,7 +371,7 @@ def run_tests():
     results.append(ok)
 
     # ---- Estados ----
-    print_header("6. Estados (/estados)")
+    print_header("5. Estados (/estados)")
     ok = test_estados(client)
     print_result("Listar todos os estados", ok)
     results.append(ok)
@@ -426,7 +381,7 @@ def run_tests():
     results.append(ok)
 
     # ---- Orçamento ----
-    print_header("7. Orçamento (/orcamento)")
+    print_header("6. Orçamento (/orcamento)")
     ok = test_orcamento(client)
     print_result("Gerar orçamento", ok)
     results.append(ok)
@@ -436,7 +391,7 @@ def run_tests():
     results.append(ok)
 
     # ---- Extras ----
-    print_header("8. Outros Endpoints")
+    print_header("7. Outros Endpoints")
     ok = test_encargos(client)
     print_result("Encargos", ok)
     results.append(ok)

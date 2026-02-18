@@ -12,10 +12,9 @@ import re
 import zipfile
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse
 
-from api.deps import verify_api_key
 from api.data_store import store
 from api.data_loader import load_zip_file, load_xlsx_file
 
@@ -142,7 +141,7 @@ async def status():
 
 # ---- Insumos ---------------------------------------------------------------
 
-@router.get("/insumos", dependencies=[Depends(verify_api_key)])
+@router.get("/insumos")
 async def buscar_insumos(request: Request):
     """Busca insumos por nome, código ou filtros."""
     params = dict(request.query_params)
@@ -158,7 +157,7 @@ async def buscar_insumos(request: Request):
 
 # ---- Composições -----------------------------------------------------------
 
-@router.get("/composicoes", dependencies=[Depends(verify_api_key)])
+@router.get("/composicoes")
 async def buscar_composicoes(request: Request):
     """Busca composições por nome, código ou filtros."""
     params = dict(request.query_params)
@@ -171,7 +170,7 @@ async def buscar_composicoes(request: Request):
     return store.buscar_composicoes(**params)
 
 
-@router.get("/composicao", dependencies=[Depends(verify_api_key)])
+@router.get("/composicao")
 async def detalhar_composicao(
     codigo: int = Query(..., description="Código da composição"),
     estado: Optional[str] = Query(None),
@@ -184,7 +183,7 @@ async def detalhar_composicao(
     return result
 
 
-@router.get("/composicao_explode", dependencies=[Depends(verify_api_key)])
+@router.get("/composicao_explode")
 async def explode_composicao(
     codigo: int = Query(..., description="Código da composição"),
     estado: Optional[str] = Query(None),
@@ -196,7 +195,7 @@ async def explode_composicao(
 
 # ---- Histórico / Comparar / Previsão (insumos e composições) ---------------
 
-@router.get("/historico", dependencies=[Depends(verify_api_key)])
+@router.get("/historico")
 async def historico(
     codigo: int = Query(..., description="Código do item"),
     item: str = Query("insumo", description="Tipo: insumo ou composicao"),
@@ -206,7 +205,7 @@ async def historico(
     return store.historico(codigo=codigo, item=item, estado=estado)
 
 
-@router.get("/comparar", dependencies=[Depends(verify_api_key)])
+@router.get("/comparar")
 async def comparar(
     codigo: int = Query(..., description="Código do item"),
     item: str = Query("insumo", description="Tipo: insumo ou composicao"),
@@ -216,7 +215,7 @@ async def comparar(
     return store.comparar(codigo=codigo, item=item, estados=estados)
 
 
-@router.get("/previsao", dependencies=[Depends(verify_api_key)])
+@router.get("/previsao")
 async def previsao(
     codigo: int = Query(..., description="Código do item"),
     item: str = Query("insumo", description="Tipo: insumo ou composicao"),
@@ -229,7 +228,7 @@ async def previsao(
 
 # ---- Encargos --------------------------------------------------------------
 
-@router.get("/encargos", dependencies=[Depends(verify_api_key)])
+@router.get("/encargos")
 async def encargos(
     estado: Optional[str] = Query(None),
     regime: Optional[str] = Query("NAO_DESONERADO"),
@@ -240,7 +239,7 @@ async def encargos(
 
 # ---- Indicadores -----------------------------------------------------------
 
-@router.get("/indicadores", dependencies=[Depends(verify_api_key)])
+@router.get("/indicadores")
 async def indicadores(request: Request):
     """Lista indicadores econômicos."""
     params = dict(request.query_params)
@@ -249,7 +248,7 @@ async def indicadores(request: Request):
 
 # ---- Estados ---------------------------------------------------------------
 
-@router.get("/estados", dependencies=[Depends(verify_api_key)])
+@router.get("/estados")
 async def estados(request: Request):
     """Lista estados disponíveis."""
     params = dict(request.query_params)
@@ -258,7 +257,7 @@ async def estados(request: Request):
 
 # ---- Orçamento -------------------------------------------------------------
 
-@router.get("/orcamento", dependencies=[Depends(verify_api_key)])
+@router.get("/orcamento")
 async def orcamento(
     itens: str = Query(..., description="Itens no formato [C|I]:codigo@quantidade,..."),
     estado: str = Query(..., description="UF"),

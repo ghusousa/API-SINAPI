@@ -40,7 +40,7 @@ app = FastAPI(
     description=(
         "API que processa arquivos SINAPI (XLSX/ZIP) da Caixa Econômica Federal "
         "e serve os dados com endpoints compatíveis com a API do Orçamentador "
-        "(www.orcamentador.com.br/api/docs). Autenticação via header X-API-Key."
+        "(www.orcamentador.com.br/api/docs)."
     ),
     version="2.0.0",
     docs_url="/docs",
