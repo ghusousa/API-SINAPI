@@ -5,8 +5,10 @@ e serve os dados a partir dos arquivos SINAPI carregados localmente.
 """
 
 import io
+import logging
 import os
 import re
+import zipfile
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
@@ -36,17 +38,28 @@ async def upload_sinapi(
     contents = await file.read()
     filename = file.filename or ""
 
-    if filename.lower().endswith(".zip"):
-        data = load_zip_file(io.BytesIO(contents))
-    elif filename.lower().endswith(".xlsx"):
-        if not estado or not referencia:
-            raise HTTPException(
-                status_code=400,
-                detail="Para upload de XLSX avulso informe 'estado' e 'referencia'",
-            )
-        data = load_xlsx_file(io.BytesIO(contents), estado, referencia)
-    else:
-        raise HTTPException(status_code=400, detail="Formato não suportado. Envie .zip ou .xlsx")
+    logger = logging.getLogger("api.upload")
+
+    try:
+        if filename.lower().endswith(".zip"):
+            data = load_zip_file(io.BytesIO(contents))
+        elif filename.lower().endswith(".xlsx"):
+            if not estado or not referencia:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Para upload de XLSX avulso informe 'estado' e 'referencia'",
+                )
+            data = load_xlsx_file(io.BytesIO(contents), estado, referencia)
+        else:
+            raise HTTPException(status_code=400, detail="Formato não suportado. Envie .zip ou .xlsx")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Erro ao processar arquivo SINAPI")
+        raise HTTPException(
+            status_code=422,
+            detail=f"Erro ao processar o arquivo: {e}",
+        )
 
     total_records = (
         len(data.get("insumos", []))
@@ -54,12 +67,15 @@ async def upload_sinapi(
         + len(data.get("analitico", []))
     )
     if total_records == 0:
+        # Include diagnostic info
+        diag = _diagnose_zip(contents, filename) if filename.lower().endswith(".zip") else ""
         raise HTTPException(
             status_code=422,
             detail=(
                 "Nenhum dado encontrado no arquivo. "
                 "Verifique se o arquivo é um SINAPI válido da Caixa "
                 "(formato XLSX/ZIP com planilhas de Insumos, Composições e Analítico)."
+                + (f" Diagnóstico: {diag}" if diag else "")
             ),
         )
 
@@ -226,3 +242,24 @@ async def orcamento(
 ):
     """Gera orçamento com base em itens e quantidades."""
     return store.gerar_orcamento(itens=itens, estado=estado, regime=regime, bdi=bdi)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _diagnose_zip(contents: bytes, filename: str) -> str:
+    """Retorna informações diagnósticas sobre um ZIP SINAPI."""
+    try:
+        with zipfile.ZipFile(io.BytesIO(contents)) as zf:
+            names = zf.namelist()
+            xlsx_files = [n for n in names if n.lower().endswith(".xlsx")]
+            total = len(names)
+            xlsx_count = len(xlsx_files)
+            sample = xlsx_files[:5] if xlsx_files else names[:5]
+            return (
+                f"ZIP contém {total} itens, {xlsx_count} XLSX. "
+                f"Exemplos: {sample}"
+            )
+    except Exception:
+        return "Não foi possível analisar o ZIP."

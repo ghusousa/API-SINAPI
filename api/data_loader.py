@@ -114,14 +114,18 @@ def _detect_file_type_from_filename(filename: str) -> Optional[str]:
 
 
 _RE_HYPERLINK = re.compile(
-    r'=HYPERLINK\("(?:[^"\\]|\\.)*",\s*"?(\d+)"?\)', re.IGNORECASE
+    r'=HYPERLINK\([^)]*[,;]\s*"?(\d+)"?\)', re.IGNORECASE
 )
 
 
 def _extract_hyperlink_value(val):
     """Extrai valor numérico de fórmulas HYPERLINK em células CODIGO.
 
-    Células SINAPI podem conter fórmulas como =HYPERLINK("...", 12345).
+    Células SINAPI podem conter fórmulas como:
+    - =HYPERLINK("url", 12345)       — separador vírgula
+    - =HYPERLINK("url"; 12345)       — separador ponto-e-vírgula (locale BR)
+    - =HYPERLINK("url", "12345")     — código entre aspas
+    - =HYPERLINK(MATCH(12345,...),...)
     """
     if val is None:
         return None
@@ -131,6 +135,11 @@ def _extract_hyperlink_value(val):
     m = _RE_HYPERLINK.match(s)
     if m:
         return int(m.group(1))
+    # Fallback: extract any trailing digits from HYPERLINK-like formula
+    if s.upper().startswith("=HYPERLINK"):
+        m2 = re.search(r'(\d{2,7})\s*\)?$', s)
+        if m2:
+            return int(m2.group(1))
     return val
 
 
@@ -184,12 +193,20 @@ def _safe_int(val) -> Optional[int]:
 
 
 def _find_col(columns: Dict[str, int], *keywords) -> Optional[int]:
-    """Encontra índice de coluna que contém qualquer uma das keywords."""
+    """Encontra índice de coluna que contém qualquer uma das keywords.
+
+    Quando várias colunas casam, prefere aquela que contém mais keywords
+    (ex: "PRECO MEDIANO" ganha de "ORIGEM DO PRECO" quando keywords são
+    "PRECO" e "MEDIANO").
+    """
+    best_idx: Optional[int] = None
+    best_score = 0
     for col_name, idx in columns.items():
-        for kw in keywords:
-            if kw in col_name:
-                return idx
-    return None
+        score = sum(1 for kw in keywords if kw in col_name)
+        if score > best_score:
+            best_score = score
+            best_idx = idx
+    return best_idx
 
 
 def parse_xlsx_workbook(wb, estado: str, referencia: str) -> dict:
@@ -472,9 +489,9 @@ def load_xlsx_file(file_path_or_bytes, estado: str, referencia: str) -> dict:
     """
     if isinstance(file_path_or_bytes, (bytes, io.BytesIO)):
         buf = io.BytesIO(file_path_or_bytes) if isinstance(file_path_or_bytes, bytes) else file_path_or_bytes
-        wb = load_workbook(buf, read_only=True, data_only=True)
+        wb = load_workbook(buf, read_only=True, data_only=False)
     else:
-        wb = load_workbook(file_path_or_bytes, read_only=True, data_only=True)
+        wb = load_workbook(file_path_or_bytes, read_only=True, data_only=False)
 
     try:
         return parse_xlsx_workbook(wb, estado, referencia)
@@ -549,7 +566,7 @@ def load_zip_file(file_path_or_bytes) -> dict:
             if file_type is not None:
                 # Real format: regime from folder/filename, type from filename
                 regime = _detect_regime(name)
-                wb = load_workbook(io.BytesIO(xlsx_bytes), read_only=True, data_only=True)
+                wb = load_workbook(io.BytesIO(xlsx_bytes), read_only=True, data_only=False)
                 try:
                     data = parse_single_type_xlsx(wb, file_type, estado, ref, regime)
                 finally:

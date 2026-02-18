@@ -234,6 +234,75 @@ class TestExtractHyperlink:
     def test_plain_string(self):
         assert _extract_hyperlink_value("hello") == "hello"
 
+    def test_hyperlink_semicolon_separator(self):
+        """SINAPI em locale brasileiro usa ponto-e-vírgula como separador."""
+        result = _extract_hyperlink_value('=HYPERLINK("http://sinapi.caixa.gov.br/370";370)')
+        assert result == 370
+
+    def test_hyperlink_semicolon_with_quotes(self):
+        result = _extract_hyperlink_value('=HYPERLINK("http://sinapi.caixa.gov.br";"12345")')
+        assert result == 12345
+
+
+# ---------------------------------------------------------------------------
+# _find_col: prefere colunas com mais keywords
+# ---------------------------------------------------------------------------
+
+class TestFindCol:
+    def test_prefers_more_specific_match(self):
+        """PRECO MEDIANO deve ganhar de ORIGEM DO PRECO quando keywords são PRECO e MEDIANO."""
+        from api.data_loader import _find_col
+        columns = {
+            "CODIGO": 0,
+            "DESCRICAO DO INSUMO": 1,
+            "UNIDADE": 2,
+            "ORIGEM DO PRECO": 3,
+            "PRECO MEDIANO R$": 4,
+        }
+        result = _find_col(columns, "PRECO", "MEDIANO", "CUSTO")
+        assert result == 4  # Must be PRECO MEDIANO, not ORIGEM DO PRECO
+
+
+# ---------------------------------------------------------------------------
+# Parsing com HYPERLINK em CODIGO (formato real Caixa com formulas)
+# ---------------------------------------------------------------------------
+
+class TestHyperlinkInCodigo:
+    def test_xlsx_with_hyperlink_formulas(self):
+        """Arquivos SINAPI reais usam HYPERLINK em CODIGO. Devem ser extraídos."""
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Insumos Sem Desoneração"
+        ws.append(["CODIGO", "DESCRICAO DO INSUMO", "UNIDADE", "PRECO MEDIANO"])
+        ws.cell(row=2, column=1).value = '=HYPERLINK("http://sinapi.caixa.gov.br/370",370)'
+        ws.cell(row=2, column=2).value = "CIMENTO PORTLAND"
+        ws.cell(row=2, column=3).value = "KG"
+        ws.cell(row=2, column=4).value = 0.62
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+
+        data = load_xlsx_file(buf, "SP", "2026-01")
+        assert len(data["insumos"]) == 1
+        assert data["insumos"][0]["codigo"] == 370
+
+    def test_real_format_with_origin_and_preco_columns(self):
+        """Arquivo com ORIGEM DO PRECO e PRECO MEDIANO deve usar o MEDIANO."""
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Insumos Sem Desoneração"
+        ws.append(["CODIGO", "DESCRICAO DO INSUMO", "UNIDADE", "ORIGEM DO PRECO", "PRECO MEDIANO R$"])
+        ws.append([370, "CIMENTO PORTLAND", "KG", "CAIXA", 0.62])
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+
+        data = load_xlsx_file(buf, "SP", "2026-01")
+        assert len(data["insumos"]) == 1
+        assert data["insumos"][0]["preco_mediano"] == 0.62  # Must be the price, not "CAIXA"
+
 
 # ---------------------------------------------------------------------------
 # Header row em posição não-padrão
