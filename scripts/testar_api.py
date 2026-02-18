@@ -12,6 +12,7 @@ import io
 import json
 import os
 import sys
+import threading
 import time
 
 # Adiciona o diretório raiz do projeto ao path
@@ -291,7 +292,6 @@ def test_swagger_docs(client: httpx.Client) -> bool:
 
 def run_tests():
     """Executa todos os testes contra o servidor."""
-    import threading
 
     # Inicia o servidor em thread separada
     print(colored("\n🚀 Iniciando servidor API SINAPI na porta 8777...", "cyan"))
