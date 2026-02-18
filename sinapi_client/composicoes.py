@@ -28,7 +28,7 @@ class Composicoes:
         Returns:
             dict: Dados das composições encontradas.
         """
-        return self._http.get("/composicoes", params=params or None)
+        return self._http.get("/composicoes", params=params)
 
     def detalhar(self, **params):
         """Detalha uma composição específica.

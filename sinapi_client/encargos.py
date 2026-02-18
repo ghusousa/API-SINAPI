@@ -17,4 +17,4 @@ class Encargos:
         Returns:
             dict: Encargos sociais.
         """
-        return self._http.get("/encargos", params=params or None)
+        return self._http.get("/encargos", params=params)

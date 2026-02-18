@@ -30,7 +30,7 @@ class Insumos:
         Returns:
             dict: Dados dos insumos encontrados.
         """
-        return self._http.get("/insumos", params=params or None)
+        return self._http.get("/insumos", params=params)
 
     def historico(self, **params):
         """Busca histórico de preços de um insumo.

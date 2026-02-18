@@ -18,4 +18,4 @@ class Indicadores:
         Returns:
             dict: Indicadores econômicos.
         """
-        return self._http.get("/indicadores", params=params or None)
+        return self._http.get("/indicadores", params=params)

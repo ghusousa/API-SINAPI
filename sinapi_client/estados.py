@@ -19,4 +19,4 @@ class Estados:
         Returns:
             dict: Estados disponíveis.
         """
-        return self._http.get("/estados", params=params or None)
+        return self._http.get("/estados", params=params)
